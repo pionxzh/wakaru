@@ -366,7 +366,7 @@ fn helper_kind_to_transpiler(kind: HelperKind) -> Option<TranspilerHelperKind> {
         HelperKind::CallSuper => Some(TranspilerHelperKind::CallSuper),
         HelperKind::AsyncToGenerator => Some(TranspilerHelperKind::AsyncToGenerator),
         HelperKind::TaggedTemplateLiteral => Some(TranspilerHelperKind::TaggedTemplateLiteral),
-        HelperKind::RegeneratorRuntime => None,
+        HelperKind::RegeneratorRuntime | HelperKind::EsbuildAsync => None,
     }
 }
 

@@ -251,6 +251,7 @@ pub use un_optional_chaining::UnOptionalChaining;
 pub use un_parameters::UnParameters;
 pub use un_possible_constructor_return::UnPossibleConstructorReturn;
 pub use un_prototype_class::UnPrototypeClass;
+pub(crate) use un_regenerator::is_esbuild_async_helper_binding;
 pub use un_regenerator::UnRegenerator;
 pub use un_rest_array_copy::UnRestArrayCopy;
 pub use un_return::UnReturn;

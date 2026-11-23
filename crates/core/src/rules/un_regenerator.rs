@@ -120,6 +120,7 @@ fn run_un_regenerator(
         }
     }
     let mut async_to_gen_default_members = Vec::new();
+    let mut imported_esbuild_async = Vec::new();
     if let Some(module_facts) = module_facts {
         let imported_helpers = collect_cross_module_async_helpers(
             module,
@@ -129,7 +130,9 @@ fn run_un_regenerator(
         );
         async_to_gen_bindings.extend(imported_helpers.direct);
         async_to_gen_default_members.extend(imported_helpers.default_members);
+        imported_esbuild_async = imported_helpers.esbuild_async;
     }
+    let imported_esbuild_async_keys = imported_esbuild_async.clone();
     let async_to_gen_callees = AsyncToGenCallees {
         direct: &async_to_gen_bindings,
         default_members: &async_to_gen_default_members,
@@ -139,7 +142,9 @@ fn run_un_regenerator(
         AsyncHelperContext::from_local_helpers(local_helpers, Some(unresolved_mark));
     generator_helpers.record_module_hazards(module);
     let regenerator_runtime_helpers = collect_regenerator_runtime_helpers(module);
-    let esbuild_async_helpers = collect_esbuild_async_helpers(module, unresolved_mark);
+    let local_esbuild_async_helpers = collect_esbuild_async_helpers(module, unresolved_mark);
+    let mut esbuild_async_helpers = local_esbuild_async_helpers.clone();
+    esbuild_async_helpers.extend(imported_esbuild_async);
     let esbuild_yield_star_helpers = collect_esbuild_yield_star_helpers(module);
 
     // Phase 2: Transform functions containing regeneratorRuntime.wrap()
@@ -202,7 +207,8 @@ fn run_un_regenerator(
         local_helpers.remove_helpers_with_dependencies(module, regenerator_runtime_helpers);
     }
 
-    remove_unused_helper_decls(module, &esbuild_async_helpers);
+    remove_unused_helper_decls(module, &local_esbuild_async_helpers);
+    remove_unused_named_imports(module, &imported_esbuild_async_keys);
     remove_unused_helper_decls(module, &esbuild_yield_star_helpers);
 }
 
@@ -216,6 +222,9 @@ struct AsyncToGenCallees<'a> {
 struct CrossModuleAsyncHelpers {
     direct: Vec<BindingKey>,
     default_members: Vec<BindingKey>,
+    /// Named imports of an export the provider's facts prove is esbuild's
+    /// `__async`.
+    esbuild_async: Vec<BindingKey>,
 }
 
 fn collect_cross_module_async_helpers(
@@ -229,10 +238,32 @@ fn collect_cross_module_async_helpers(
     for item in &module.body {
         match item {
             ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
+                let source = str_to_atom(&import.src.value);
+                for specifier in &import.specifiers {
+                    let ImportSpecifier::Named(named) = specifier else {
+                        continue;
+                    };
+                    let imported = named
+                        .imported
+                        .as_ref()
+                        .map_or_else(|| named.local.sym.clone(), export_name_atom);
+                    if module_exports_helper(
+                        module_facts,
+                        current_filename,
+                        &source,
+                        imported.as_ref(),
+                        HelperKind::EsbuildAsync,
+                    ) {
+                        helpers
+                            .esbuild_async
+                            .push((named.local.sym.clone(), named.local.ctxt));
+                    }
+                }
+
                 if !module_exports_helper(
                     module_facts,
                     current_filename,
-                    &str_to_atom(&import.src.value),
+                    &source,
                     "default",
                     HelperKind::AsyncToGenerator,
                 ) {
@@ -3960,12 +3991,8 @@ fn collect_esbuild_async_helpers(module: &Module, unresolved_mark: Mark) -> Vec<
                     let Pat::Ident(binding) = &decl.name else {
                         return None;
                     };
-                    let name = binding.id.sym.as_ref();
-                    if !is_esbuild_async_helper_name(name) && !is_likely_generated_alias(name) {
-                        return None;
-                    }
                     let init = decl.init.as_deref()?;
-                    if is_esbuild_async_helper_expr(init, unresolved_mark) {
+                    if is_esbuild_async_helper_binding(&binding.id.sym, init, unresolved_mark) {
                         Some((binding.id.sym.clone(), binding.id.ctxt))
                     } else {
                         None
@@ -3974,6 +4001,19 @@ fn collect_esbuild_async_helpers(module: &Module, unresolved_mark: Mark) -> Vec<
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+/// Whether `name = init` declares esbuild's `__async` helper: the name is
+/// `__async` (or a deconflicted copy) or a minified one, and the body builds a
+/// `new Promise` that steps a generator through `.apply`. Unpack facts use it
+/// to prove a helper exported from another module.
+pub(crate) fn is_esbuild_async_helper_binding(
+    name: &str,
+    init: &Expr,
+    unresolved_mark: Mark,
+) -> bool {
+    (is_esbuild_async_helper_name(name) || is_likely_generated_alias(name))
+        && is_esbuild_async_helper_expr(init, unresolved_mark)
 }
 
 /// `__async`, or a deconflicted copy when a bundle holds several: esbuild
@@ -4591,6 +4631,34 @@ fn remove_unused_helper_decls(module: &mut Module, helpers: &[BindingKey]) {
     remove_unused_helper_declarations(module, &candidates);
 }
 
+/// Drops the named import specifiers of `helpers` that nothing reads any more.
+/// The import declaration stays, even with no specifiers left, so the provider
+/// still runs where it did.
+fn remove_unused_named_imports(module: &mut Module, helpers: &[BindingKey]) {
+    if helpers.is_empty() {
+        return;
+    }
+    let uses = crate::analysis::binding_uses::BindingUseIndex::collect(module);
+    let unused: Vec<&BindingKey> = helpers
+        .iter()
+        .filter(|key| uses.use_count(key) == 0)
+        .collect();
+    if unused.is_empty() {
+        return;
+    }
+    for item in &mut module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        import.specifiers.retain(|specifier| {
+            let ImportSpecifier::Named(named) = specifier else {
+                return true;
+            };
+            !unused.contains(&&(named.local.sym.clone(), named.local.ctxt))
+        });
+    }
+}
+
 // ============================================================
 // Shared helpers
 // ============================================================
@@ -4642,6 +4710,13 @@ fn export_name_is(name: &swc_core::ecma::ast::ModuleExportName, expected: &str) 
     match name {
         swc_core::ecma::ast::ModuleExportName::Ident(id) => id.sym.as_ref() == expected,
         swc_core::ecma::ast::ModuleExportName::Str(s) => s.value.as_str() == Some(expected),
+    }
+}
+
+fn export_name_atom(name: &swc_core::ecma::ast::ModuleExportName) -> Atom {
+    match name {
+        swc_core::ecma::ast::ModuleExportName::Ident(id) => id.sym.clone(),
+        swc_core::ecma::ast::ModuleExportName::Str(s) => str_to_atom(&s.value),
     }
 }
 

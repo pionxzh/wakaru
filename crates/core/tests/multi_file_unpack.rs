@@ -5354,3 +5354,123 @@ fn a_wildcard_of_a_marked_whole_value_provider_keeps_its_namespace_import() {
     let consumer = module_named(&output.modules, "module-400.js");
     assert!(!consumer.contains("import lib from"), "{consumer}");
 }
+
+const ESBUILD_ASYNC_HELPER: &str = r#"var __async = (__this, __arguments, generator) => {
+  return new Promise((resolve, reject) => {
+    var fulfilled = (value) => {
+      try {
+        step(generator.next(value));
+      } catch (e) {
+        reject(e);
+      }
+    };
+    var rejected = (value) => {
+      try {
+        step(generator.throw(value));
+      } catch (e) {
+        reject(e);
+      }
+    };
+    var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
+    step((generator = generator.apply(__this, __arguments)).next());
+  });
+};
+"#;
+
+fn unpack_esbuild_async_split(shared: String, consumer: &str) -> Vec<(String, String)> {
+    unpack_files(
+        vec![
+            UnpackInput {
+                filename: "entry-alpha.js".to_string(),
+                source: consumer.to_string(),
+            },
+            UnpackInput {
+                filename: "chunk-shared.js".to_string(),
+                source: shared,
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("esbuild split output should unpack")
+    .modules
+}
+
+fn module_code<'a>(modules: &'a [(String, String)], name: &str) -> &'a str {
+    modules
+        .iter()
+        .find(|(filename, _)| filename == name)
+        .map(|(_, code)| code.as_str())
+        .unwrap_or_else(|| panic!("missing {name}: {modules:?}"))
+}
+
+#[test]
+fn esbuild_async_helper_imported_from_a_shared_chunk_recovers_async() {
+    // esbuild's code splitting puts `__async` in a shared chunk that each entry
+    // imports by name, so the helper is never in the caller's module.
+    let shared = format!("{ESBUILD_ASYNC_HELPER}export {{ __async }};\n");
+    let consumer = r#"import { __async } from "./chunk-shared.js";
+function loadStatus(url) {
+  return __async(this, null, function* () {
+    const response = yield fetch(url);
+    return response.status;
+  });
+}
+export { loadStatus };
+"#;
+    let modules = unpack_esbuild_async_split(shared, consumer);
+    let entry = module_code(&modules, "entry-alpha.js");
+    assert!(
+        entry.contains("async function loadStatus(url)")
+            && entry.contains("await fetch(url)")
+            && !entry.contains("__async"),
+        "{entry}"
+    );
+    assert_valid_module_graph(&modules);
+}
+
+#[test]
+fn esbuild_async_helper_under_a_minified_export_name_recovers_async() {
+    let shared = format!(
+        "{}export {{ o as a }};\n",
+        ESBUILD_ASYNC_HELPER.replace("var __async =", "var o =")
+    );
+    let consumer = r#"import { a as t } from "./chunk-shared.js";
+import { other } from "./chunk-shared.js";
+function loadStatus(url) {
+  return t(this, null, function* () {
+    return (yield fetch(url)).status;
+  });
+}
+export { loadStatus };
+"#;
+    let shared = format!("{shared}export const other = 1;\n");
+    let modules = unpack_esbuild_async_split(shared, consumer);
+    let entry = module_code(&modules, "entry-alpha.js");
+    assert!(
+        entry.contains("async function loadStatus(url)") && !entry.contains("t(this"),
+        "{entry}"
+    );
+    // the provider is still imported where it was
+    assert!(entry.contains("./chunk-shared.js"), "{entry}");
+    assert_valid_module_graph(&modules);
+}
+
+#[test]
+fn reassigned_esbuild_async_export_is_not_a_helper() {
+    // The exported binding is replaced after its declaration, so its shape
+    // proves nothing about the value callers receive.
+    let shared = format!(
+        "{ESBUILD_ASYNC_HELPER}globalThis.swap = () => {{ __async = (a, b, g) => g; }};\nexport {{ __async }};\n"
+    );
+    let consumer = r#"import { __async } from "./chunk-shared.js";
+function loadStatus(url) {
+  return __async(this, null, function* () {
+    return (yield fetch(url)).status;
+  });
+}
+export { loadStatus };
+"#;
+    let modules = unpack_esbuild_async_split(shared, consumer);
+    let entry = module_code(&modules, "entry-alpha.js");
+    assert!(entry.contains("__async(this, null, function*"), "{entry}");
+}

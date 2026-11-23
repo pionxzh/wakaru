@@ -100,6 +100,9 @@ pub enum HelperKind {
     AsyncToGenerator,
     TaggedTemplateLiteral,
     RegeneratorRuntime,
+    /// esbuild's `__async(this, args, function* () {...})` helper for an `async`
+    /// function lowered below ES2017.
+    EsbuildAsync,
 }
 
 /// Raw TypeScript/tslib helper identity proven from a module's exported AST shape.
@@ -445,6 +448,7 @@ impl fmt::Display for HelperKind {
             HelperKind::AsyncToGenerator => write!(f, "asyncToGenerator"),
             HelperKind::TaggedTemplateLiteral => write!(f, "taggedTemplateLiteral"),
             HelperKind::RegeneratorRuntime => write!(f, "regeneratorRuntime"),
+            HelperKind::EsbuildAsync => write!(f, "esbuild __async"),
         }
     }
 }
@@ -664,7 +668,17 @@ fn object_ident_property_names(object: &ObjectLit) -> Vec<Atom> {
 }
 
 pub fn collect_module_facts(module: &Module) -> ModuleFacts {
-    collect_module_facts_with_helpers(module, HelperFacts::collect(module))
+    collect_module_facts_with_helpers(module, HelperFacts::collect(module, None))
+}
+
+/// [`collect_module_facts`] that also proves helpers whose shape reads a
+/// global, such as esbuild's `__async` (`new Promise`), so it needs the
+/// module's `unresolved_mark`.
+pub(crate) fn collect_module_facts_with_mark(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> ModuleFacts {
+    collect_module_facts_with_helpers(module, HelperFacts::collect(module, Some(unresolved_mark)))
 }
 
 /// The transpiler helpers a module exports.
@@ -677,9 +691,12 @@ pub(crate) struct HelperFacts {
 }
 
 impl HelperFacts {
-    pub(crate) fn collect(module: &Module) -> Self {
+    /// Without `unresolved_mark`, helpers recognized only through a global
+    /// (esbuild's `__async`) are not proven.
+    pub(crate) fn collect(module: &Module, unresolved_mark: Option<Mark>) -> Self {
         let exports = collect_declared_facts(module).exports;
-        let (helper_exports, exports_any_helper) = collect_helper_exports(module, &exports);
+        let (helper_exports, exports_any_helper) =
+            collect_helper_exports(module, &exports, unresolved_mark);
         let default_object_helper_exports = collect_default_object_helper_exports(module);
         let ts_helper_exports = collect_ts_helper_exports(module, &exports);
         Self {
@@ -1264,6 +1281,7 @@ fn static_prop_name(name: &PropName) -> Option<&str> {
 fn collect_helper_exports(
     module: &Module,
     exports: &[ExportFact],
+    unresolved_mark: Option<Mark>,
 ) -> (Vec<HelperExportFact>, bool) {
     let local_helpers = collect_transpiler_helpers(module);
     let mut helper_exports = Vec::new();
@@ -1298,6 +1316,13 @@ fn collect_helper_exports(
             .or_else(|| {
                 is_regenerator_runtime_binding(module, local)
                     .then_some(HelperKind::RegeneratorRuntime)
+            })
+            .or_else(|| {
+                let unresolved_mark = unresolved_mark?;
+                let (key, init) = top_level_var_init(module, local)?;
+                (crate::rules::is_esbuild_async_helper_binding(local, init, unresolved_mark)
+                    && binding_is_never_reassigned(module, &key))
+                .then_some(HelperKind::EsbuildAsync)
             });
 
         if matches_transpiler || kind.is_some() {
@@ -1313,6 +1338,42 @@ fn collect_helper_exports(
     }
 
     (helper_exports, exports_any_helper)
+}
+
+/// The binding and initializer of the only top-level `var`/`let`/`const`
+/// declarator named `name`, exported in place (`export const P = …`) or not.
+fn top_level_var_init<'a>(module: &'a Module, name: &Atom) -> Option<(BindingKey, &'a Expr)> {
+    let mut found = None;
+    for item in &module.body {
+        let var = match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => var,
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                decl: Decl::Var(var),
+                ..
+            })) => var,
+            _ => continue,
+        };
+        for decl in &var.decls {
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+            if &binding.id.sym != name {
+                continue;
+            }
+            if found.is_some() {
+                return None;
+            }
+            found = Some((binding_key(&binding.id), decl.init.as_deref()?));
+        }
+    }
+    found
+}
+
+/// A binding declared once and never written after, so its initializer is its
+/// only value.
+fn binding_is_never_reassigned(module: &Module, key: &BindingKey) -> bool {
+    let uses = BindingUseIndex::collect(module);
+    uses.has_single_declaration(key) && !uses.has_direct_write(key)
 }
 
 /// The helper kind of `export default function (…) {…}` or

@@ -787,6 +787,18 @@ Neither proof creates a default-object fact available to consumers.
   helpers that were hoisted into their own module and consumed through generated
   `require()`/interop aliases such as `h.default(...)`, but only when the target
   module's helper export fact proves the default export is the async helper.
+  It also recognizes esbuild's `__async` imported by name from another module
+  (`import { __async } from "./chunk.js"`, or a minified `import { a as t }`),
+  as esbuild's code splitting and the scope-hoist split both emit it. The
+  `EsbuildAsync` helper fact is proven from the exported binding's own
+  initializer: a top-level `var`/`let`/`const` declared once and never
+  written, whose name is `__async` (or a deconflicted or minified one) and
+  whose body builds an unresolved `new Promise` that steps a generator through
+  `.apply`. Proving it needs the module's `unresolved_mark`, so plain
+  `collect_module_facts` (no mark) never records it; unpack collects with
+  the mark. Namespace members and re-exports of the helper are not followed.
+  A converted import's named specifier is dropped once nothing reads it; the
+  import declaration stays.
 - **`UnAsyncAwait`** — recognizes direct imports and namespace members only
   when raw TypeScript helper facts prove `__awaiter` / `__generator`. For
   scope-hoisted CommonJS wrappers, a separate provider-side fact proves that

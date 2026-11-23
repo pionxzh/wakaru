@@ -45,9 +45,10 @@ use super::{recover_late_esm_from_factory_iifes, LateEsmRecoveryOptions};
 use crate::facts::{
     collect_commonjs_default_object, collect_commonjs_value_is_default,
     collect_default_object_tail, collect_input_is_es_module, collect_marks_es_module,
-    collect_module_facts, collect_module_facts_with_helpers, collect_never_names_es_module,
-    collect_replaces_module_exports, collect_require_returns_exports_object,
-    is_normalized_commonjs_default, HelperFacts, ModuleFactsMap,
+    collect_module_facts_with_helpers, collect_module_facts_with_mark,
+    collect_never_names_es_module, collect_replaces_module_exports,
+    collect_require_returns_exports_object, is_normalized_commonjs_default, HelperFacts,
+    ModuleFactsMap,
 };
 use crate::interface_plan::{
     exports_from_requires, exports_only_whole_value, passthrough_source, required_whole_value,
@@ -1076,7 +1077,10 @@ pub(super) fn unpack_multi_module_with_plan(
                 let _enter = span.enter();
                 if settled {
                     recover_late(module);
-                    return (collect_module_facts(module), None);
+                    return (
+                        collect_module_facts_with_mark(module, unresolved_mark),
+                        None,
+                    );
                 }
                 // The helper facts and the rule range work on separate
                 // copies of the barrier AST, so they run in parallel: when
@@ -1103,7 +1107,7 @@ pub(super) fn unpack_multi_module_with_plan(
                         || {
                             GLOBALS.set(globals, || {
                                 recover_late(&mut helper_module);
-                                HelperFacts::collect(&helper_module)
+                                HelperFacts::collect(&helper_module, Some(unresolved_mark))
                             })
                         },
                     )
