@@ -2,6 +2,7 @@
 
 const { platform, arch } = process;
 const { spawnSync } = require("child_process");
+const { constants } = require("os");
 
 const PLATFORMS = {
   darwin: {
@@ -56,4 +57,15 @@ if (result.error) {
   throw result.error;
 }
 
-process.exitCode = result.status;
+if (result.signal) {
+  // A signal killed the binary (SIGABRT when an allocation fails under an
+  // address-space limit, for one), so it has no exit status. Die of the same
+  // signal, so the caller sees what running the binary directly shows. Node
+  // ignores or handles a few signals (SIGPIPE, for one); if this process
+  // survives the kill, it exits with the shell's code for that signal.
+  const number = constants.signals[result.signal];
+  process.exitCode = number ? 128 + number : 1;
+  process.kill(process.pid, result.signal);
+} else {
+  process.exitCode = result.status;
+}

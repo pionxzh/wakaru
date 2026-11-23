@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { constants, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -79,4 +88,45 @@ test("unsupported-platform error lists every supported platform", () => {
   const actual = supported[1].split(", ");
   const expected = platformPackageDirectories().map((name) => name.replace("cli-", ""));
   assert.deepEqual(sorted(actual), sorted(expected));
+});
+
+// Installs a copy of the launcher next to a fake platform package whose binary
+// is the given shell script, and runs the launcher.
+function runLauncherWithFakeBinary(script) {
+  const root = mkdtempSync(join(tmpdir(), "wakaru-launcher-"));
+  try {
+    mkdirSync(join(root, "bin"));
+    copyFileSync(launcherPath, join(root, "bin/wakaru"));
+    const packageDir = join(root, `node_modules/@wakaru/cli-${process.platform}-${process.arch}`);
+    mkdirSync(packageDir, { recursive: true });
+    writeFileSync(join(packageDir, "wakaru"), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+    return spawnSync(process.execPath, [join(root, "bin/wakaru")], { encoding: "utf8" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const posixSkip = process.platform === "win32" ? "needs POSIX signals and a shell-script binary" : false;
+
+test("launcher passes the binary's exit status through", { skip: posixSkip }, () => {
+  const result = runLauncherWithFakeBinary("exit 3");
+
+  assert.equal(result.signal, null, result.stderr);
+  assert.equal(result.status, 3, result.stderr);
+});
+
+for (const signal of ["SIGABRT", "SIGTERM"]) {
+  test(`launcher dies of the ${signal} that killed the binary`, { skip: posixSkip }, () => {
+    const result = runLauncherWithFakeBinary(`kill -${signal.slice(3)} $$`);
+
+    assert.equal(result.signal, signal, `status ${result.status}: ${result.stderr}`);
+  });
+}
+
+test("launcher exits 128 + signal when it survives the binary's signal", { skip: posixSkip }, () => {
+  // Node ignores SIGPIPE, so re-raising it does not end the launcher.
+  const result = runLauncherWithFakeBinary("kill -PIPE $$");
+
+  assert.equal(result.signal, null, result.stderr);
+  assert.equal(result.status, 128 + constants.signals.SIGPIPE, result.stderr);
 });
