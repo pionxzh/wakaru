@@ -2063,6 +2063,7 @@ version = "1.17.0"
 dependencies = [
  "anyhow",
  "clap",
+ "libc",
  "mimalloc",
  "rayon",
  "serde",

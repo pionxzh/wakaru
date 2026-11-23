@@ -275,7 +275,9 @@ It does not need Node:
 
 Set `RAYON_NUM_THREADS=1` to recover one module at a time, which lowers peak
 memory. Peak memory grows with the largest module, so a bundle that Wakaru
-does not split uses the most.
+does not split uses the most. Under a limit, Wakaru also uses smaller thread
+stacks, so code nested thousands of levels deep can abort. One thread leaves
+each thread more stack.
 
 ## Overwrite protection
 

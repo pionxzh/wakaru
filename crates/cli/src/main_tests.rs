@@ -3444,3 +3444,16 @@ fn rsc_fails_on_input_without_a_payload() {
     );
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }
+
+#[test]
+fn work_stacks_shrink_to_a_share_of_the_address_space_limit() {
+    const MIB: u64 = 1024 * 1024;
+    // 13 threads under 1 GiB: 128 MiB / 13, rounded down to whole MiB.
+    assert_eq!(stack_size_within(1024 * MIB, 13), 9 * 1024 * 1024);
+    // Fewer threads get more, up to the unlimited size.
+    assert_eq!(stack_size_within(1024 * MIB, 2), WORK_STACK_SIZE);
+    assert_eq!(stack_size_within(u64::MAX, 13), WORK_STACK_SIZE);
+    // A share below the default stack keeps the default.
+    assert_eq!(stack_size_within(128 * MIB, 13), DEFAULT_STACK_SIZE);
+    assert_eq!(stack_size_within(0, 0), DEFAULT_STACK_SIZE);
+}

@@ -177,8 +177,19 @@ nesting, so stack use follows the deepest expression of an input, not its
 size. Real code nests hundreds of levels: a builder's method chain of hundreds
 of calls, a string concatenation of hundreds of terms. The platform default
 stacks (1 MiB for the main thread on Windows, 2 MiB for a spawned thread)
-overflow on such inputs, and a stack overflow aborts the process. The CLI runs
-its work on a thread with a 64 MiB stack and builds the global Rayon pool with
-the same worker stack size; a caller of this API should do the same: call it
-from a thread with a large stack, and build the Rayon pool it runs in (the
-global one, or one it `install`s) with `ThreadPoolBuilder::stack_size`.
+overflow on such inputs, and a stack overflow aborts the process. In a release
+build, a 2000-call method chain needs about 12 MiB. The CLI runs its work on a
+thread with a 32 MiB stack and builds the global Rayon pool with the same
+worker stack size; a caller of this API should do the same: call it from a
+thread with a large stack, and build the Rayon pool it runs in (the global
+one, or one it `install`s) with `ThreadPoolBuilder::stack_size`.
+
+Reserved stacks count against an address-space limit (`RLIMIT_AS`, set by
+`prlimit --as` or `ulimit -v`), one per worker. Under such a limit the CLI
+shrinks the stacks so that together they reserve at most an eighth of it,
+never below the 2 MiB default, and starts a thread whose stack cannot be
+reserved on the default stack instead. Expressions nested deep enough to need
+the full stack can then overflow it. On Linux with glibc, the CLI also keeps
+glibc's `malloc` to one arena under such a limit: Wakaru allocates through
+mimalloc, but glibc's `malloc` still runs on new threads and reserves 64 MiB
+per arena, which can leave no room for the next thread's stack.

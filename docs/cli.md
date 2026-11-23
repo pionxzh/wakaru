@@ -528,6 +528,10 @@ Wakaru recovers modules in parallel, one worker thread per CPU core. Set
 memory. Peak memory grows with the largest module, not with the whole input:
 a bundle that Wakaru does not split is one large module.
 
+Under an address-space limit, Wakaru shrinks its thread stacks to fit. An
+expression nested thousands of levels deep can then overflow the stack and
+abort. `RAYON_NUM_THREADS=1` leaves each thread a larger stack.
+
 ## Diagnostics and profiling
 
 ```bash

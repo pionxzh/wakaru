@@ -343,28 +343,163 @@ struct TraceArgs {
 /// left-nested expression — a builder's method chain of hundreds of calls,
 /// a string concatenation of hundreds of terms — nests that many levels and
 /// overflows the platform defaults (1 MiB for the main thread on Windows,
-/// 2 MiB for a spawned thread). The size is address space reserved per
-/// thread; pages are committed only as the stack grows into them.
-const WORK_STACK_SIZE: usize = 64 * 1024 * 1024;
+/// 2 MiB for a spawned thread). In a release build a 2000-call method chain
+/// needs about 12 MiB, so 32 MiB leaves more than twice that.
+///
+/// The size is address space reserved per thread; pages are committed only
+/// as the stack grows into them. Under an address-space limit the reserved
+/// stacks count against it, so [`work_stack_size`] shrinks them.
+const WORK_STACK_SIZE: usize = 32 * 1024 * 1024;
+
+/// The stack size Rust and Rayon give a spawned thread, and the floor for a
+/// stack shrunk to fit an address-space limit.
+const DEFAULT_STACK_SIZE: usize = 2 * 1024 * 1024;
+
+/// Under an address-space limit, the work stacks together reserve at most
+/// this fraction (1/N) of it. The allocator, the inputs, and the ASTs need
+/// the rest.
+const ADDRESS_SPACE_SHARE: u64 = 8;
 
 fn main() -> Result<()> {
     install_panic_hook();
 
+    let stack_size = work_stack_size();
     // Nothing builds the global pool before this point, so this cannot find
     // one already in place.
-    rayon::ThreadPoolBuilder::new()
-        .stack_size(WORK_STACK_SIZE)
-        .build_global()
-        .context("failed to start the worker thread pool")?;
-    let work = std::thread::Builder::new()
-        .name("main".to_string())
-        .stack_size(WORK_STACK_SIZE)
-        .spawn(run)
-        .context("failed to start the main thread")?;
-    match work.join() {
-        Ok(result) => result,
-        Err(panic) => std::panic::resume_unwind(panic),
+    start_worker_pool(stack_size).context("failed to start the worker thread pool")?;
+    match spawn_work_thread(stack_size) {
+        Some(work) => match work.join() {
+            Ok(result) => result,
+            Err(panic) => std::panic::resume_unwind(panic),
+        },
+        // No thread could start at all: run the command here, on the
+        // platform's main-thread stack.
+        None => run(),
     }
+}
+
+/// The stack size for the command thread and the Rayon workers.
+///
+/// Thread stacks count against an address-space limit (`RLIMIT_AS`, set by
+/// `ulimit -v` or `prlimit --as`), so under one the stacks shrink until the
+/// command thread and all workers together reserve at most
+/// 1/[`ADDRESS_SPACE_SHARE`] of it, but never below the default.
+fn work_stack_size() -> usize {
+    match address_space_limit() {
+        Some(limit) => {
+            limit_malloc_arenas();
+            stack_size_within(limit, rayon_thread_count() + 1)
+        }
+        None => WORK_STACK_SIZE,
+    }
+}
+
+/// Keeps glibc's `malloc` to one arena.
+///
+/// Wakaru allocates through mimalloc, but glibc's own `malloc` still runs on
+/// new threads, and its first call on a thread creates an arena that reserves
+/// 64 MiB of address space, up to eight per core. Under an address-space
+/// limit those arenas take the room the thread stacks need, and starting a
+/// worker fails.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn limit_malloc_arenas() {
+    // SAFETY: no other thread has started yet, so nothing is allocating.
+    unsafe {
+        libc::mallopt(libc::M_ARENA_MAX, 1);
+    }
+}
+
+/// Only glibc's `malloc` reserves an arena per thread.
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn limit_malloc_arenas() {}
+
+/// The process's address-space limit, when one is set. Windows has none.
+#[cfg(not(unix))]
+fn address_space_limit() -> Option<u64> {
+    None
+}
+
+/// The process's address-space limit, when one is set.
+#[cfg(unix)]
+fn address_space_limit() -> Option<u64> {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: `getrlimit` only writes the struct it is given.
+    if unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut limit) } != 0
+        || limit.rlim_cur == libc::RLIM_INFINITY
+    {
+        return None;
+    }
+    Some(limit.rlim_cur)
+}
+
+/// The per-thread stack size that keeps `threads` stacks within the share of
+/// `limit`, rounded down to whole MiB and clamped to
+/// `DEFAULT_STACK_SIZE..=WORK_STACK_SIZE`.
+fn stack_size_within(limit: u64, threads: usize) -> usize {
+    const MIB: u64 = 1024 * 1024;
+    let share = limit / ADDRESS_SPACE_SHARE / threads.max(1) as u64 / MIB * MIB;
+    usize::try_from(share)
+        .unwrap_or(usize::MAX)
+        .clamp(DEFAULT_STACK_SIZE, WORK_STACK_SIZE)
+}
+
+/// The number of workers Rayon starts in the global pool, decided the way
+/// `ThreadPoolBuilder` decides it when the count is not set.
+fn rayon_thread_count() -> usize {
+    let from_env = |name| {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+    };
+    match from_env("RAYON_NUM_THREADS").or_else(|| from_env("RAYON_RS_NUM_CPUS")) {
+        Some(count) if count > 0 => count,
+        _ => std::thread::available_parallelism().map_or(1, |count| count.get()),
+    }
+}
+
+/// Builds the global Rayon pool with `stack_size` worker stacks. A worker
+/// whose stack cannot be reserved (an address-space limit that leaves too
+/// little room) starts on the default stack instead.
+fn start_worker_pool(stack_size: usize) -> std::result::Result<(), rayon::ThreadPoolBuildError> {
+    rayon::ThreadPoolBuilder::new()
+        .spawn_handler(move |thread| {
+            let name = thread.name().map(str::to_owned);
+            // `spawn` drops its closure when it fails, so the worker sits
+            // where a second attempt can still take it.
+            let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(thread)));
+            let spawn = |stack_size: Option<usize>| {
+                let slot = std::sync::Arc::clone(&slot);
+                let mut builder = std::thread::Builder::new();
+                if let Some(name) = &name {
+                    builder = builder.name(name.clone());
+                }
+                if let Some(stack_size) = stack_size {
+                    builder = builder.stack_size(stack_size);
+                }
+                builder.spawn(move || {
+                    let thread = slot.lock().ok().and_then(|mut slot| slot.take());
+                    if let Some(thread) = thread {
+                        thread.run();
+                    }
+                })
+            };
+            spawn(Some(stack_size)).or_else(|_| spawn(None)).map(drop)
+        })
+        .build_global()
+}
+
+/// Starts the thread that runs the command, falling back to the default
+/// stack size when `stack_size` cannot be reserved.
+fn spawn_work_thread(stack_size: usize) -> Option<std::thread::JoinHandle<Result<()>>> {
+    let builder = || std::thread::Builder::new().name("main".to_string());
+    builder()
+        .stack_size(stack_size)
+        .spawn(run)
+        .or_else(|_| builder().spawn(run))
+        .ok()
 }
 
 fn run() -> Result<()> {
