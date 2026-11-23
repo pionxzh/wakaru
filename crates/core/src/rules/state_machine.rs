@@ -27,15 +27,23 @@ impl OpcodeReturnScan {
 
 #[derive(Clone, Copy)]
 pub(crate) enum ForwardJumpJoin {
-    /// Fold only guards that jump past every remaining block. Regenerator
-    /// machines encode the post-yield continuation in `_ctx.next` rather than
-    /// linear fallthrough, so folding up to a mid-machine join could silently
-    /// keep blocks that the original control flow skips.
+    /// Fold only guards that jump past every remaining block. Used for a
+    /// regenerator machine where some transfer the decoder dropped does not
+    /// land on the next statement in label order (a yield whose `_ctx.next`
+    /// resume label is not the next case, a dropped back-edge to label 0, a
+    /// mid-machine `stop()`), or where a guard jumps to a catch label: folding
+    /// up to a mid-machine join could then keep blocks that the original
+    /// control flow skips.
     EndOfMachine,
-    /// Also fold guards that jump to a mid-machine join. Sound for TypeScript
-    /// `__generator` machines: yields always resume at the lexically next
-    /// label, and every other transfer is an explicit `[3, N]` opcode that the
-    /// body scan rejects.
+    /// Also fold guards that jump to a mid-machine join. Sound when every
+    /// transfer the decoder dropped falls through to the next statement in
+    /// label order, and every other transfer is an explicit `[3, N]` opcode
+    /// that the body scan rejects. TypeScript `__generator` machines always
+    /// qualify: yields resume at the lexically next label. A regenerator
+    /// machine qualifies when `dropped_edges_fall_through` in
+    /// `un_regenerator.rs` holds: each yield resumes at the next case and ends
+    /// its case, `stop()` sits only at the end, a dropped goto is fallthrough
+    /// or a try exit, and no guard jumps to a catch label.
     MidMachine,
 }
 

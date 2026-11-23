@@ -2729,10 +2729,9 @@ function myFunc() {
 }
 
 #[test]
-fn bail_on_async_to_gen_when_regenerator_decode_rolls_back() {
-    // Real Babel output can pass the shallow wrap-shape precheck while the
-    // state-machine decoder correctly rolls back after an unsupported jump
-    // remains. The async wrapper must remain intact instead of panicking.
+fn babel_guard_chain_joining_mid_machine_recovers_async_function() {
+    // Real Babel output: three guards, each joining at a mid-machine label.
+    // Every yield resumes at the next case, so the guards fold at their joins.
     let input = r#"
 function _asyncToGenerator(fn) {
   return function() {
@@ -2774,6 +2773,85 @@ function init() {
             return create();
           case 9:
             existing = _context.sent;
+            pending = null;
+            loading = false;
+          case 12:
+            return _context.abrupt("return", existing);
+          case 13:
+          case "end":
+            return _context.stop();
+        }
+      }
+    }, _callee);
+  }))();
+}
+"#;
+    let expected = r#"
+async function init() {
+  if (!supports()) {
+    return Promise.resolve(true);
+  }
+  if (loading) {
+    return pending;
+  }
+  if (!existing) {
+    existing = await create();
+    pending = null;
+    loading = false;
+  }
+  return existing;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn bail_on_async_to_gen_when_regenerator_decode_rolls_back() {
+    // A machine can pass the shallow wrap-shape precheck while the
+    // state-machine decoder rolls back after an unsupported jump remains:
+    // here the yield in case 4 resumes at label 12 rather than the next case,
+    // so the guards keep end-of-machine joins and stay opcodes. The async
+    // wrapper must remain intact instead of panicking.
+    let input = r#"
+function _asyncToGenerator(fn) {
+  return function() {
+    var gen = fn.apply(this, arguments);
+    return new Promise(function(resolve, reject) {
+      function step(key, arg) {
+        var info = gen[key](arg);
+        if (info.done) { resolve(info.value); } else { Promise.resolve(info.value).then(_next, _throw); }
+      }
+      function _next(value) { step("next", value); }
+      function _throw(err) { step("throw", err); }
+      _next(undefined);
+    });
+  };
+}
+function init() {
+  return _asyncToGenerator(regeneratorRuntime.mark(function _callee() {
+    return regeneratorRuntime.wrap(function(_context) {
+      while (true) {
+        switch (_context.prev = _context.next) {
+          case 0:
+            if (supports()) {
+              _context.next = 2;
+              break;
+            }
+            return _context.abrupt("return", Promise.resolve(true));
+          case 2:
+            if (!loading) {
+              _context.next = 4;
+              break;
+            }
+            return _context.abrupt("return", pending);
+          case 4:
+            if (existing) {
+              _context.next = 12;
+              break;
+            }
+            _context.next = 12;
+            return create();
+          case 9:
             pending = null;
             loading = false;
           case 12:
@@ -3847,5 +3925,502 @@ function load(e, n) {
             && !output.contains("async function load")
             && output.contains("var n;"),
         "direct eval must keep the generator boundary, got:\n{output}"
+    );
+}
+
+// ── forward guards that join mid-machine ────────────────────────────────────
+//
+// Shapes from `producer @babel/preset-env@7.23.9 targets ie 11, modules false`
+// (inline `_regeneratorRuntime()` helper, `_context.next`) and
+// `producer @babel/preset-env@7.29.0` (`_regenerator().w`, `_context.n`), with
+// the async-function trampoline kept and the runtime helper bodies left out.
+
+#[test]
+fn babel_723_early_return_guard_recovers_async_function() {
+    // `if (!a) return "guard-empty"; await tick("early"); return a;`
+    let input = format!(
+        "{BABEL_ASYNC_TO_GENERATOR}{}",
+        r#"
+export function early(_x) {
+  return _early.apply(this, arguments);
+}
+function _early() {
+  _early = _asyncToGenerator(_regeneratorRuntime().mark(function _callee(a) {
+    return _regeneratorRuntime().wrap(function _callee$(_context) {
+      while (1) switch (_context.prev = _context.next) {
+        case 0:
+          if (a) {
+            _context.next = 2;
+            break;
+          }
+          return _context.abrupt("return", "guard-empty");
+        case 2:
+          _context.next = 4;
+          return tick("early");
+        case 4:
+          return _context.abrupt("return", a);
+        case 5:
+        case "end":
+          return _context.stop();
+      }
+    }, _callee);
+  }));
+  return _early.apply(this, arguments);
+}
+"#
+    );
+    let expected = r#"
+export async function early(a) {
+  if (!a) {
+    return "guard-empty";
+  }
+  await tick("early");
+  return a;
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn babel_723_if_await_without_else_recovers_async_function() {
+    // `if (b) { await tick("guarded"); } return a + 1;`
+    let input = format!(
+        "{BABEL_ASYNC_TO_GENERATOR}{}",
+        r#"
+export function guarded(_x, _x2) {
+  return _guarded.apply(this, arguments);
+}
+function _guarded() {
+  _guarded = _asyncToGenerator(_regeneratorRuntime().mark(function _callee(a, b) {
+    return _regeneratorRuntime().wrap(function _callee$(_context) {
+      while (1) switch (_context.prev = _context.next) {
+        case 0:
+          if (!b) {
+            _context.next = 3;
+            break;
+          }
+          _context.next = 3;
+          return tick("guarded");
+        case 3:
+          return _context.abrupt("return", a + 1);
+        case 4:
+        case "end":
+          return _context.stop();
+      }
+    }, _callee);
+  }));
+  return _guarded.apply(this, arguments);
+}
+"#
+    );
+    let expected = r#"
+export async function guarded(a, b) {
+  if (b) {
+    await tick("guarded");
+  }
+  return a + 1;
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn babel_729_early_return_guard_recovers_async_function() {
+    let input = format!(
+        "{BABEL_ASYNC_TO_GENERATOR}{}",
+        r#"
+export function early(_x) {
+  return _early.apply(this, arguments);
+}
+function _early() {
+  _early = _asyncToGenerator(_regenerator().m(function _callee(a) {
+    return _regenerator().w(function (_context) {
+      while (1) switch (_context.n) {
+        case 0:
+          if (a) {
+            _context.n = 1;
+            break;
+          }
+          return _context.a(2, "guard-empty");
+        case 1:
+          _context.n = 2;
+          return tick("early");
+        case 2:
+          return _context.a(2, a);
+      }
+    }, _callee);
+  }));
+  return _early.apply(this, arguments);
+}
+"#
+    );
+    let expected = r#"
+export async function early(a) {
+  if (!a) {
+    return "guard-empty";
+  }
+  await tick("early");
+  return a;
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn babel_729_if_await_without_else_recovers_async_function() {
+    let input = format!(
+        "{BABEL_ASYNC_TO_GENERATOR}{}",
+        r#"
+export function guarded(_x, _x2) {
+  return _guarded.apply(this, arguments);
+}
+function _guarded() {
+  _guarded = _asyncToGenerator(_regenerator().m(function _callee(a, b) {
+    return _regenerator().w(function (_context) {
+      while (1) switch (_context.n) {
+        case 0:
+          if (!b) {
+            _context.n = 1;
+            break;
+          }
+          _context.n = 1;
+          return tick("guarded");
+        case 1:
+          return _context.a(2, a + 1);
+      }
+    }, _callee);
+  }));
+  return _guarded.apply(this, arguments);
+}
+"#
+    );
+    let expected = r#"
+export async function guarded(a, b) {
+  if (b) {
+    await tick("guarded");
+  }
+  return a + 1;
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn guard_inside_index_loop_is_not_read_as_continue() {
+    // `for (var i = 0; i < n; i++) { if (a) { await x(i); } await y(i); }`.
+    // The guard's join (label 5) is the loop's second await, not its update:
+    // reading the guard as `continue` would skip `await y(i)`.
+    let input = format!(
+        "{BABEL_ASYNC_TO_GENERATOR}{}",
+        r#"
+function run(_x, _x2) {
+  return _run.apply(this, arguments);
+}
+function _run() {
+  _run = _asyncToGenerator(_regeneratorRuntime().mark(function _callee(n, a) {
+    var i;
+    return _regeneratorRuntime().wrap(function _callee$(_context) {
+      while (1) switch (_context.prev = _context.next) {
+        case 0:
+          i = 0;
+        case 1:
+          if (!(i < n)) {
+            _context.next = 10;
+            break;
+          }
+          if (!a) {
+            _context.next = 5;
+            break;
+          }
+          _context.next = 5;
+          return x(i);
+        case 5:
+          _context.next = 7;
+          return y(i);
+        case 7:
+          i++;
+          _context.next = 1;
+          break;
+        case 10:
+          return _context.abrupt("return", 1);
+        case 11:
+        case "end":
+          return _context.stop();
+      }
+    }, _callee);
+  }));
+  return _run.apply(this, arguments);
+}
+"#
+    );
+    let expected = r#"
+async function run(n, a) {
+  let i = 0;
+  for (; i < n; i++) {
+    if (a) {
+      await x(i);
+    }
+    await y(i);
+  }
+  return 1;
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn guard_around_index_loop_keeps_the_loop_inside_the_branch() {
+    // `if (a) { for (var i = 0; i < n; i++) { await y(i); } } return 4;`.
+    // Without the mid-machine join the guard was read as the loop test.
+    let input = format!(
+        "{BABEL_ASYNC_TO_GENERATOR}{}",
+        r#"
+function run(_x, _x2) {
+  return _run.apply(this, arguments);
+}
+function _run() {
+  _run = _asyncToGenerator(_regeneratorRuntime().mark(function _callee(a, n) {
+    var i;
+    return _regeneratorRuntime().wrap(function _callee$(_context) {
+      while (1) switch (_context.prev = _context.next) {
+        case 0:
+          if (!a) {
+            _context.next = 8;
+            break;
+          }
+          i = 0;
+        case 2:
+          if (!(i < n)) {
+            _context.next = 8;
+            break;
+          }
+          _context.next = 5;
+          return y(i);
+        case 5:
+          i++;
+          _context.next = 2;
+          break;
+        case 8:
+          return _context.abrupt("return", 4);
+        case 9:
+        case "end":
+          return _context.stop();
+      }
+    }, _callee);
+  }));
+  return _run.apply(this, arguments);
+}
+"#
+    );
+    let expected = r#"
+async function run(a, n) {
+  let i;
+  if (a) {
+    i = 0;
+    for (; i < n; i++) {
+      await y(i);
+    }
+  }
+  return 4;
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn mid_machine_guard_with_non_adjacent_yield_resume_fails_closed() {
+    // The guard at label 0 joins at label 3, but the yield in case 2 resumes
+    // at label 5, skipping case 3. Folding the guard up to label 3 would run
+    // `yield c` after `yield b`.
+    let input = r#"
+var _marked = regeneratorRuntime.mark(myGen);
+function myGen(cond) {
+  return regeneratorRuntime.wrap(function(e) {
+    while (true) {
+      switch (e.prev = e.next) {
+        case 0:
+          if (!cond) {
+            e.next = 3;
+            break;
+          }
+          e.next = 2;
+          return a;
+        case 2:
+          e.next = 5;
+          return b;
+        case 3:
+          e.next = 5;
+          return c;
+        case 5:
+          return e.abrupt("return", d);
+        case 6:
+        case "end":
+          return e.stop();
+      }
+    }
+  }, _marked, this);
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("regeneratorRuntime"),
+        "a yield that skips the join must keep the machine, got:\n{output}"
+    );
+}
+
+#[test]
+fn mid_machine_guard_with_comma_yield_skipping_the_join_fails_closed() {
+    // Same control flow through the comma form `return e.next = N, value`.
+    let input = r#"
+var _marked = regeneratorRuntime.mark(myGen);
+function myGen(cond) {
+  return regeneratorRuntime.wrap(function(e) {
+    for (;;) switch (e.prev = e.next) {
+      case 0:
+        if (!cond) {
+          e.next = 3;
+          break;
+        }
+        return e.next = 2, a;
+      case 2:
+        return e.next = 5, b;
+      case 3:
+        return e.next = 5, c;
+      case 5:
+        return e.abrupt("return", d);
+      case 6:
+      case "end":
+        return e.stop();
+    }
+  }, _marked, this);
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("regeneratorRuntime"),
+        "a comma-form yield that skips the join must keep the machine, got:\n{output}"
+    );
+}
+
+#[test]
+fn mid_machine_guard_into_a_catch_label_fails_closed() {
+    // A guard inside the try body that jumps straight to the catch label runs
+    // the catch body without an exception; a rebuilt `try` cannot say that.
+    let input = r#"
+var _marked = regeneratorRuntime.mark(myGen);
+function myGen(cond) {
+  return regeneratorRuntime.wrap(function(e) {
+    while (1) switch (e.prev = e.next) {
+      case 0:
+        e.prev = 0;
+        if (cond) {
+          e.next = 5;
+          break;
+        }
+        e.next = 3;
+        return a;
+      case 3:
+        e.next = 8;
+        break;
+      case 5:
+        e.prev = 5;
+        e.t0 = e["catch"](0);
+        handle(e.t0);
+      case 8:
+        return e.abrupt("return", d);
+      case 9:
+      case "end":
+        return e.stop();
+    }
+  }, _marked, this, [[0, 5]]);
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("regeneratorRuntime"),
+        "a jump into a catch label must keep the machine, got:\n{output}"
+    );
+}
+
+#[test]
+fn babel_729_mid_machine_void_return_keeps_the_machine() {
+    // `if (!a) { log("no-a"); return; } await tick("v1");` through 7.29: the
+    // value-less `_context.a(2)` decodes as the machine's final stop and is
+    // dropped, so folding the guard would fall through into the yield.
+    let input = r#"
+var _marked = _regenerator().m(run);
+function run(a) {
+  return _regenerator().w(function (_context) {
+    while (1) switch (_context.n) {
+      case 0:
+        if (a) {
+          _context.n = 1;
+          break;
+        }
+        log("no-a");
+        return _context.a(2);
+      case 1:
+        _context.n = 2;
+        return tick("v1");
+      case 2:
+        return _context.a(2);
+    }
+  }, _marked);
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("_regenerator().w"),
+        "a mid-machine stop must keep the machine, got:\n{output}"
+    );
+}
+
+#[test]
+fn back_edge_to_label_zero_keeps_end_of_machine_joins() {
+    // `while (a.more()) { if (a.skip) { await a.step(); } a.n++; } return 3;`:
+    // the decoder drops the back-edge to label 0 and wraps the machine in
+    // `while (true)`, so the loop test may not fold up to the loop exit as a
+    // one-shot guard.
+    let input = format!(
+        "{BABEL_ASYNC_TO_GENERATOR}{}",
+        r#"
+function run(_x) {
+  return _run.apply(this, arguments);
+}
+function _run() {
+  _run = _asyncToGenerator(_regeneratorRuntime().mark(function _callee(a) {
+    return _regeneratorRuntime().wrap(function _callee$(_context) {
+      while (1) switch (_context.prev = _context.next) {
+        case 0:
+          if (!a.more()) {
+            _context.next = 7;
+            break;
+          }
+          if (!a.skip) {
+            _context.next = 4;
+            break;
+          }
+          _context.next = 4;
+          return a.step();
+        case 4:
+          a.n++;
+          _context.next = 0;
+          break;
+        case 7:
+          return _context.abrupt("return", 3);
+        case 8:
+        case "end":
+          return _context.stop();
+      }
+    }, _callee);
+  }));
+  return _run.apply(this, arguments);
+}
+"#
+    );
+    let output = render(&input);
+    assert!(
+        !output.contains("if (a.more())"),
+        "the loop test must not become a one-shot guard, got:\n{output}"
     );
 }

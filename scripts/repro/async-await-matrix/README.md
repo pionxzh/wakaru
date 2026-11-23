@@ -30,20 +30,23 @@ now correctly show as `no`. Remaining `no` rows fall into four honest buckets:
 - **state-machine** — wakaru leaves a Terser-compressed regenerator runtime intact.
 - **degraded** — a helper artifact leaks (`__rest` inlined, `const x = undefined`,
   `push.apply(...)` not recovered).
-- **control-flow** — every `for await` row through a regenerator machine
-  (Babel `regenerator` mode and preset-env) stays a machine. The decoder
-  rebuilds the loop and both try regions. The protocol's close guard
-  (`if (abrupt && it.return != null)`) sits in the try block nested inside
-  the `finally`, and it jumps forward to that block's `finally` label. The
-  regenerator decoder joins forward jumps only at the end of the machine,
-  so this jump stays an opcode and the decode fails closed. A `break` in the
-  loop adds a second block: it exits through an abrupt-completion opcode
-  inside the try region (`_context.a(3, N)`), which the decoder does not
-  structure either. One Terser shape of the swc `_ts_generator` machine
-  nests a yield opcode two ternaries deep in a single `return`, which also
-  stays a machine. The `__generator` machines (tsc-es5, swc-es5) join
-  forward jumps mid-machine and rebuild loops inside try regions, so their
-  `for await` rows recover, including the Terser variants.
+- **control-flow** — `for await` rows through the Babel 7.8 and 7.13
+  `regenerator` profiles stay machines: those profiles lower the function
+  through `regeneratorRuntime.async(...)` with `regeneratorRuntime.awrap(...)`
+  operands, an entry wakaru does not decode. Through Babel 7.28+, Babel 8,
+  and preset-env 7.29, the protocol's close guard
+  (`if (abrupt && it.return != null)`), which jumps forward to the `finally`
+  label of the try block nested inside the outer `finally`, folds as a
+  mid-machine join: the regenerator decoder allows that join when every
+  yield in the machine resumes at the next case. Those rows recover; the
+  `no` rows left among them are Terser variants whose recovered loop keeps a
+  protocol temporary (`(item = _step).done`) or reads an early return as
+  `if (!found) continue;`, plus the destructured-element and nested-loop rows
+  below. One Terser shape of the swc `_ts_generator` machine nests a yield
+  opcode two ternaries deep in a single `return`, which stays a machine. The
+  `__generator` machines (tsc-es5, swc-es5) join forward jumps mid-machine
+  and rebuild loops inside try regions, so their `for await` rows recover,
+  including the Terser variants.
 - **nested loop** — a sync `for…of` inside the recovered `for await` body
   keeps its indexed form: the machine hoists the index and array temporaries
   to the function scope and assigns them in place, a shape the for-of
@@ -53,8 +56,9 @@ now correctly show as `no`. Remaining `no` rows fall into four honest buckets:
   `_slicedToArray(temp = defaulted, n)` on an inline-assigned temp, and the
   `input == null ? await load() : input` pick stays an `if`/`else` temp
   assignment instead of folding to `??`. A destructured `for await` element
-  through a `__generator` machine (tsc-es5, swc-es5) binds the value
-  temporary and keeps the hoisted member reads (`id = _d.id`) in the body.
+  through a `__generator` machine (tsc-es5, swc-es5) or a Babel 7.28+
+  regenerator machine binds the value temporary and keeps the hoisted member
+  reads (`id = _d.id`) in the body.
 
 The matrix's `error` count is separate from those Wakaru recovery failures.
 It counts producer or harness transform failures, for which Wakaru is not

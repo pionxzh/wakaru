@@ -46,9 +46,13 @@ const snippets = [
       "storage.setItemAsync(KEY, id)",
       "return id",
     ],
-    // This row targets TypeScript's forward jump into a mid-machine join;
-    // other async lowerers use unrelated state-machine/helper shapes.
-    transformerFilter: ({ name }) => name.startsWith("tsc-es5"),
+    // This row targets a forward jump into a mid-machine join: TypeScript's
+    // `__generator` and preset-env's regenerator machine. The Babel
+    // `regenerator` profiles carry no nullish-coalescing plugin and cannot
+    // lower `??`; other async lowerers use unrelated state-machine/helper
+    // shapes.
+    transformerFilter: ({ name }) =>
+      name.startsWith("tsc-es5") || name.startsWith("babel-7.29-preset-env-ie11"),
   },
   {
     name: "async-arrow-captured-this",

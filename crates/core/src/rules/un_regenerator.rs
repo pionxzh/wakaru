@@ -1976,11 +1976,7 @@ fn decode_babel_state_machine(
             if is_next_assign(state_param, stmt) {
                 if let Some(target) = extract_state_next_assign_target(state_param, stmt) {
                     if i + 1 < stmts.len() && matches!(stmts[i + 1], Stmt::Break(_)) {
-                        if target > 0
-                            && (target < label
-                                || (target > label && Some(target) != next_case_label))
-                            && !is_try_region_exit(label, target, &trys)
-                        {
+                        if next_break_is_kept_jump(label, target, next_case_label, &trys) {
                             flat.push((label, jump_return_stmt(target)));
                         }
                         i += 2;
@@ -2229,19 +2225,25 @@ fn decode_babel_state_machine(
     // Phase 3: Detect infinite loops (case 0 → ... → goto 0 pattern)
     let has_back_edge_to_zero = detect_back_edge_to_zero(state_param, &cases);
 
+    // A forward guard may fold up to a mid-machine join only when every edge
+    // the decoder dropped lands on the statement that follows it in label
+    // order. A regenerator yield resumes at the `_ctx.next` label set before
+    // it, which need not be the next case; folding up to a join could then
+    // keep blocks the original machine skips (the `bail_on_nested_control_flow`
+    // test in un_regenerator_rule.rs). Otherwise only guards that jump past
+    // every remaining block fold.
+    let join_mode = if dropped_edges_fall_through(state_param, &cases, &trys) {
+        ForwardJumpJoin::MidMachine
+    } else {
+        ForwardJumpJoin::EndOfMachine
+    };
+
     let mut result = StateMachineProgram::from_labeled_stmts(output, trys)
         .with_catch_bindings(catch_bindings)
         .with_index_loops(IndexLoopContinueMode::SingleBodyJumpTarget)
         .recover_conditional_assignments()
         .recover_conditional_branches(OpcodeReturnScan::IncludeNestedFunctions)
-        // MidMachine joins are unsound here: a regenerator yield resumes at the
-        // `_ctx.next` label set before it, not the lexically next case, so
-        // folding up to a join can keep blocks the original machine skips
-        // (see the `bail_on_nested_control_flow` test in un_regenerator_rule.rs).
-        .resolve_labeled_forward_jumps(
-            OpcodeReturnScan::IncludeNestedFunctions,
-            ForwardJumpJoin::EndOfMachine,
-        )
+        .resolve_labeled_forward_jumps(OpcodeReturnScan::IncludeNestedFunctions, join_mode)
         .into_reconstructed_stmts_with_index_loops(IndexLoopContinueMode::SingleBodyJumpTarget);
     fold_state_temp_member_calls(state_param, &mut result);
 
@@ -2262,6 +2264,163 @@ fn decode_babel_state_machine(
     }
 
     result
+}
+
+/// Whether the decoded machine falls through wherever the decoder dropped a
+/// transfer, which is what makes a mid-machine guard fold sound
+/// (`ForwardJumpJoin::MidMachine`). The decoder drops three kinds of edge:
+///
+/// - a `_ctx.next = N; break;` that `next_break_is_kept_jump` does not keep:
+///   allowed here only when it goes to the next case, which is fallthrough, or
+///   out of a try region, which try-region reconstruction rebuilds (a dropped
+///   back-edge to label 0 fails); a kept jump stays an explicit
+///   `return [3, N]` that the fold's body scan rejects;
+/// - a yield's resume label (`_ctx.next = N; return value;`, the comma form
+///   `return _ctx.next = N, value;`, or a delegate yield's location operand):
+///   required here to be the next case label, with the yield ending its case;
+/// - `return _ctx.stop()` (and the 7.27+ value-less `_ctx.a(2)`): required
+///   here to sit in the last numeric case or the "end" case, where nothing
+///   follows it.
+///
+/// A guard may also not jump to a catch label: the runtime enters a catch only
+/// by a throw, and a rebuilt `try` statement cannot express entering it by a
+/// jump. (A jump to a finally label is how Babel leaves a try or catch body,
+/// and a fold up to it stays inside that body.) Any other top-level
+/// shape (a bare `break`, a `_ctx.next` assignment followed by anything but
+/// `break` or a yield, a return the decoder does not recognize) fails closed.
+fn dropped_edges_fall_through(
+    state_param: &Ident,
+    cases: &[SwitchCase],
+    trys: &[[Option<usize>; 4]],
+) -> bool {
+    let catch_labels: HashSet<usize> = trys.iter().filter_map(|region| region[1]).collect();
+    let last_label = cases.iter().filter_map(case_label_index).max();
+    for case in cases {
+        let Some(idx) = case_label_index(case) else {
+            // The "end" case: only the final `stop()` may live there.
+            let only_stop = case.cons.iter().all(|stmt| {
+                matches!(stmt, Stmt::Return(ret)
+                    if ret.arg.as_deref().is_some_and(|arg| is_stop_call(state_param, arg)))
+            });
+            if !only_stop {
+                return false;
+            }
+            continue;
+        };
+        let next_label = next_numeric_case_label(cases, idx);
+        let stmts = &case.cons;
+        // Tracks the decoder's label, which a mid-case try entry advances.
+        let mut label = idx;
+        let mut i = 0;
+        while i < stmts.len() {
+            let stmt = &stmts[i];
+            let ends_case = i + 1 == stmts.len();
+            if is_prev_assign(state_param, stmt) {
+                if let Some(entry) = extract_prev_assign_target(state_param, stmt) {
+                    if entry > label && trys.iter().any(|region| region[0] == Some(entry)) {
+                        label = entry;
+                    }
+                }
+                i += 1;
+                continue;
+            }
+            if is_next_assign(state_param, stmt) {
+                let Some(target) = extract_state_next_assign_target(state_param, stmt) else {
+                    return false;
+                };
+                match stmts.get(i + 1) {
+                    // A kept jump, fallthrough to the next case, or a try
+                    // exit. Any other dropped goto (the back-edge to label 0
+                    // that the caller rebuilds as `while (true)`, a goto to
+                    // its own label) does not fall through.
+                    Some(Stmt::Break(_)) => {
+                        if !next_break_is_kept_jump(label, target, next_label, trys)
+                            && Some(target) != next_label
+                            && !is_try_region_exit(label, target, trys)
+                        {
+                            return false;
+                        }
+                    }
+                    Some(Stmt::Return(ret))
+                        if i + 2 == stmts.len()
+                            && ret.arg.is_some()
+                            && decode_return(state_param, ret).is_none() =>
+                    {
+                        // `_ctx.next = N; return value;` is a yield.
+                        if Some(target) != next_label {
+                            return false;
+                        }
+                    }
+                    _ => return false,
+                }
+                i += 2;
+                continue;
+            }
+            match stmt {
+                Stmt::Break(_) => return false,
+                Stmt::If(if_stmt) => {
+                    if let Some(target) = extract_next_break_target(state_param, &if_stmt.cons) {
+                        if catch_labels.contains(&target) {
+                            return false;
+                        }
+                        // `if (c) { _ctx.next = N; break; }` followed by
+                        // `return _ctx.abrupt("continue", M);` decodes as one
+                        // guard to M (see `decode_nested_state_jump`).
+                        if let Some(continue_target) = stmts
+                            .get(i + 1)
+                            .and_then(|next| extract_continue_target(state_param, next))
+                            .filter(|continue_target| *continue_target != target)
+                        {
+                            if catch_labels.contains(&continue_target) {
+                                return false;
+                            }
+                            i += 2;
+                            continue;
+                        }
+                    }
+                }
+                Stmt::Return(ret) => {
+                    let Some(arg) = ret.arg.as_deref() else {
+                        return false;
+                    };
+                    match decode_return(state_param, ret) {
+                        Some(DecodedReturn::CommaYield(_)) => {
+                            let target = match arg {
+                                Expr::Seq(seq) => seq
+                                    .exprs
+                                    .first()
+                                    .and_then(|first| next_assign_expr_target(state_param, first)),
+                                _ => None,
+                            };
+                            if !ends_case || target.is_none() || target != next_label {
+                                return false;
+                            }
+                        }
+                        Some(DecodedReturn::DelegateYield { next_loc, .. }) => {
+                            if !ends_case || next_loc.is_none() || next_loc != next_label {
+                                return false;
+                            }
+                        }
+                        Some(DecodedReturn::Stop) => {
+                            if !is_finish_call(state_param, arg) && Some(idx) != last_label {
+                                return false;
+                            }
+                        }
+                        Some(
+                            DecodedReturn::Return(_)
+                            | DecodedReturn::ReturnVoid
+                            | DecodedReturn::Throw(_),
+                        ) => {}
+                        // A value return with no resume label set before it.
+                        None => return false,
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+    }
+    true
 }
 
 fn detect_back_edge_to_zero(state_param: &Ident, cases: &[SwitchCase]) -> bool {
@@ -2328,7 +2487,12 @@ fn extract_state_next_assign_target(state_param: &Ident, stmt: &Stmt) -> Option<
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
     };
-    let Expr::Assign(assign) = expr.as_ref() else {
+    next_assign_expr_target(state_param, expr)
+}
+
+/// The label `N` of a `_ctx.next = N` / `_ctx.n = N` expression.
+fn next_assign_expr_target(state_param: &Ident, expr: &Expr) -> Option<usize> {
+    let Expr::Assign(assign) = expr else {
         return None;
     };
     if assign.op != AssignOp::Assign {
@@ -2452,6 +2616,21 @@ fn infer_try_region_nexts(trys: &mut [[Option<usize>; 4]], cases: &[SwitchCase])
             .min();
         region[3] = next;
     }
+}
+
+/// Whether the decoder keeps a top-level `_ctx.next = target; break;` at
+/// `label` as an explicit `return [3, target]` jump. It drops the rest: a
+/// back-edge to label 0 (rebuilt as `while (true)` around the machine), a goto
+/// to its own label, fallthrough to the next case, and a try-region exit.
+fn next_break_is_kept_jump(
+    label: usize,
+    target: usize,
+    next_case_label: Option<usize>,
+    trys: &[[Option<usize>; 4]],
+) -> bool {
+    target > 0
+        && (target < label || (target > label && Some(target) != next_case_label))
+        && !is_try_region_exit(label, target, trys)
 }
 
 fn is_try_region_exit(label: usize, target: usize, trys: &[[Option<usize>; 4]]) -> bool {
