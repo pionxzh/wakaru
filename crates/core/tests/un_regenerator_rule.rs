@@ -1265,6 +1265,41 @@ async function collect_enabled(items) {
 }
 
 #[test]
+fn esbuild_mangled_async_generator_helper_is_not_async() {
+    // `__asyncGenerator` also calls `.apply` and builds promises, but returns
+    // an iterator. Reading it as `__async` would turn the generator into an
+    // async function and its `yield`s into `await`s.
+    let input = r#"
+var s = function(a, b) { this[0] = a, this[1] = b; };
+var B = (a, b, c) => {
+  var d = (f, h, i, k) => {
+    try {
+      var n = c[f](h), o = (h = n.value) instanceof s, t = n.done;
+      Promise.resolve(o ? h[0] : h).then(j => o ? d(f === "return" ? f : "next", h[1] ? {done: j.done, value: j.value} : j, i, k) : i({value: j, done: t})).catch(j => d("throw", j, i, k));
+    } catch (j) { k(j); }
+  }, g = f => e[f] = h => new Promise((i, k) => d(f, h, i, k)), e = {};
+  return c = c.apply(a, b), e[Symbol.asyncIterator] = () => e, g("next"), g("throw"), g("return"), e;
+};
+function items(source) {
+  return B(this, null, function* () {
+    yield source.first;
+    yield new s(source.next());
+  });
+}
+use(items);
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("async function items"),
+        "an async generator must not become an async function, got:\n{output}"
+    );
+    assert!(
+        output.contains("yield source.first"),
+        "the generator body must keep its yields, got:\n{output}"
+    );
+}
+
+#[test]
 fn esbuild_yield_star_helper_is_unwrapped() {
     let input = r#"
 var __knownSymbol = (name, symbol) => (symbol = Symbol[name]) ? symbol : Symbol.for("Symbol." + name);

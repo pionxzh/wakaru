@@ -4205,77 +4205,59 @@ fn is_esbuild_async_helper_name(name: &str) -> bool {
     rest.is_empty() || (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
 }
 
+/// esbuild's `__async` returns `new Promise(...)` straight away and steps the
+/// generator it built with `.apply` inside that executor. `__asyncGenerator`
+/// also calls `.apply` and builds promises, but returns an iterator object, so
+/// requiring the returned value to be the Promise keeps it out.
 fn is_esbuild_async_helper_expr(expr: &Expr, unresolved_mark: Mark) -> bool {
-    let body = match expr {
-        Expr::Arrow(arrow) => arrow.body.as_ref(),
-        Expr::Fn(fn_expr) => {
-            let Some(body) = &fn_expr.function.body else {
-                return false;
-            };
-            return esbuild_async_helper_body_has_shape(&body.stmts, unresolved_mark);
-        }
-        _ => return false,
+    let returned = match expr {
+        Expr::Arrow(arrow) => match arrow.body.as_ref() {
+            ArrowFunctionBody::Expr(expr) => Some(expr.as_ref()),
+            ArrowFunctionBody::FunctionBody(block) => single_returned_expr(&block.stmts),
+        },
+        Expr::Fn(fn_expr) => fn_expr
+            .function
+            .body
+            .as_ref()
+            .and_then(|body| single_returned_expr(&body.stmts)),
+        _ => None,
     };
-
-    match body {
-        ArrowFunctionBody::FunctionBody(block) => {
-            esbuild_async_helper_body_has_shape(&block.stmts, unresolved_mark)
-        }
-        ArrowFunctionBody::Expr(expr) => {
-            let mut finder = EsbuildAsyncHelperFinder::new(unresolved_mark);
-            expr.visit_with(&mut finder);
-            finder.found_promise && finder.found_generator_apply
-        }
+    let Some(Expr::New(new_expr)) = returned.map(strip_parens) else {
+        return false;
+    };
+    if !matches!(
+        new_expr.callee.as_ref(),
+        Expr::Ident(id) if id.sym.as_ref() == "Promise" && id.ctxt.outer() == unresolved_mark
+    ) {
+        return false;
     }
+    let mut finder = GeneratorApplyFinder::default();
+    new_expr.args.visit_with(&mut finder);
+    finder.found
 }
 
-fn esbuild_async_helper_body_has_shape(stmts: &[Stmt], unresolved_mark: Mark) -> bool {
-    let mut finder = EsbuildAsyncHelperFinder::new(unresolved_mark);
-    for stmt in stmts {
-        stmt.visit_with(&mut finder);
-    }
-    finder.found_promise && finder.found_generator_apply
+fn single_returned_expr(stmts: &[Stmt]) -> Option<&Expr> {
+    let [Stmt::Return(ret)] = stmts else {
+        return None;
+    };
+    ret.arg.as_deref()
 }
 
-struct EsbuildAsyncHelperFinder {
-    unresolved_mark: Mark,
-    found_promise: bool,
-    found_generator_apply: bool,
+#[derive(Default)]
+struct GeneratorApplyFinder {
+    found: bool,
 }
 
-impl EsbuildAsyncHelperFinder {
-    fn new(unresolved_mark: Mark) -> Self {
-        Self {
-            unresolved_mark,
-            found_promise: false,
-            found_generator_apply: false,
-        }
-    }
-}
-
-impl Visit for EsbuildAsyncHelperFinder {
-    fn visit_expr(&mut self, expr: &Expr) {
-        if let Expr::New(new_expr) = expr {
-            if matches!(
-                new_expr.callee.as_ref(),
-                Expr::Ident(id)
-                    if id.sym.as_ref() == "Promise" && id.ctxt.outer() == self.unresolved_mark
-            ) {
-                self.found_promise = true;
-            }
-        }
-
-        if let Expr::Call(call) = expr {
-            if let Some(callee) = call.callee.as_expr() {
-                if let Expr::Member(member) = callee.as_ref() {
-                    if member_prop_name(&member.prop, "apply") {
-                        self.found_generator_apply = true;
-                    }
+impl Visit for GeneratorApplyFinder {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Some(callee) = call.callee.as_expr() {
+            if let Expr::Member(member) = callee.as_ref() {
+                if member_prop_name(&member.prop, "apply") {
+                    self.found = true;
                 }
             }
         }
-
-        expr.visit_children_with(self);
+        call.visit_children_with(self);
     }
 }
 
