@@ -12,7 +12,10 @@ npx wakaru input.js -o output.js
 ```
 
 This keeps the code in one file. If you want to split a bundle into modules,
-see [Unpack a bundle](/guides/unpack-a-bundle).
+see [Unpack a bundle](/guides/unpack-a-bundle). If the file is one chunk of a
+larger build and imports from the other chunks, unpack the whole build
+instead, so Wakaru can follow those imports: see
+[Code-split builds](/guides/unpack-a-bundle#code-split-builds).
 
 ## See what changes
 

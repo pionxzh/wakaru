@@ -28,6 +28,25 @@ decompiled as one file each. Files that do not parse are skipped. A bundle
 that cannot be split safely is kept as one file, with a warning that gives the
 reason.
 
+## Code-split builds
+
+Many builds write their code to several files: Vite and Rollup chunks,
+esbuild with code splitting, webpack's async chunks. Each file imports what
+it needs from the others, often including the transpiler helpers that every
+file shares, such as esbuild's `__spreadValues` or Babel's `_objectSpread`.
+
+Give Wakaru the whole build at once, not one file at a time:
+
+```bash
+npx wakaru dist/assets/ --unpack -o out/
+```
+
+Wakaru then reads the files together and follows the imports between them.
+A helper defined in a shared chunk is recognized in every file that imports
+it, so its calls turn back into object spread, `async` functions, and the
+like. A file decompiled on its own cannot see where that helper is defined,
+so its calls stay as they are.
+
 ## Output
 
 One file per module. A small production webpack bundle with four modules

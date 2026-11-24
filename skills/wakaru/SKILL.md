@@ -96,6 +96,12 @@ wakaru ./compiled-app --unpack --raw -o out/  # extract a Bun single-file execut
 wakaru bun extract ./compiled-app -o raw/     # dump every embedded Bun file as the bundler emitted it
 ```
 
+For a code-split build (Vite or Rollup chunks, esbuild splitting, webpack async
+chunks), pass every chunk or the build directory in one `--unpack` run rather
+than decompiling the files one at a time: Wakaru then follows the imports
+between them, so helpers a shared chunk defines are recognized where other
+files import them.
+
 Bun single-file executable extraction requires an explicit executable path
 (directory scans and stdin handle JavaScript only). `--unpack` selects the
 JavaScript-like records and sends them through
