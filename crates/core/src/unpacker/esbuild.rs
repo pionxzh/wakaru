@@ -15,6 +15,7 @@ mod bindings;
 mod emit;
 mod factories;
 mod glob_import;
+mod inline_factories;
 mod lazy_import;
 mod ownership;
 mod scope;
@@ -38,6 +39,7 @@ use factories::{
     has_parenthesized_factory_args, item_has_helper_factory_declarator, locally_exported_atoms,
     unwrap_parenthesized_factory_args, Factory, FactoryBodyRef, PathCommentHints,
 };
+use inline_factories::{has_inlined_factory_calls, name_inlined_factories};
 use lazy_import::{plan_lazy_imports, LazyImportPlan};
 use ownership::{
     apply_demotion, claim_standalone_ownership, group_standalone_writers,
@@ -71,13 +73,17 @@ pub(super) fn detect_from_module_with_source(
         return None;
     }
 
-    // Cloned only for a bundle that passes factories in parentheses (rolldown).
-    let unwrapped_module = has_parenthesized_factory_args(module, &helper_syms).then(|| {
-        let mut unwrapped = module.clone();
-        unwrap_parenthesized_factory_args(&mut unwrapped, &helper_syms);
-        unwrapped
+    // Cloned only for a bundle that passes factories in parentheses or
+    // inlines a factory into its call (rolldown).
+    let normalized_module = (has_parenthesized_factory_args(module, &helper_syms)
+        || has_inlined_factory_calls(module, &helper_syms))
+    .then(|| {
+        let mut normalized = module.clone();
+        unwrap_parenthesized_factory_args(&mut normalized, &helper_syms);
+        name_inlined_factories(&mut normalized, &helper_syms);
+        normalized
     });
-    let module = unwrapped_module.as_ref().unwrap_or(module);
+    let module = normalized_module.as_ref().unwrap_or(module);
 
     // Evidence of esbuild structure found — clone + resolve for binding analysis.
     let unresolved_mark = Mark::new();
@@ -153,6 +159,11 @@ pub(super) fn detect_from_owned_factory_module_with_source(
     positions: SourcePositions,
 ) -> Result<UnpackResult, Module> {
     let helper_syms = collect_helper_syms(&module);
+    // Naming an inlined factory may not lead to a split; the borrowed
+    // detector does it on a copy, so the candidate goes back unchanged.
+    if has_inlined_factory_calls(&module, &helper_syms) {
+        return Err(module);
+    }
     unwrap_parenthesized_factory_args(&mut module, &helper_syms);
     if helper_syms.is_empty() || !has_factory_detection_evidence(&module, &helper_syms) {
         return Err(module);

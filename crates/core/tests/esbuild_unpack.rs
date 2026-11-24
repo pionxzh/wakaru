@@ -170,6 +170,88 @@ fn factory_passed_in_parentheses_unpacks_like_a_bare_factory() {
     assert_eq!(twice, bare);
 }
 
+// rolldown's minifier inlines a factory used once into the call that runs it.
+const INLINE_HELPER: &str = "var o = (e, t) => () => (t || (e((t = { exports: {} }).exports, t, t.exports), e = null), t.exports), \
+     l = (m) => ({ default: m });";
+
+fn module_names(pairs: &[(String, String)]) -> Vec<&str> {
+    pairs.iter().map(|(name, _)| name.as_str()).collect()
+}
+
+#[test]
+fn inlined_factory_in_a_var_initializer_becomes_its_own_module() {
+    let bundle = format!(
+        "{INLINE_HELPER}\n\
+         var c = l(o(((e, t) => {{ t.exports = {{ label: \"inlined-provider\" }}; }}))());\n\
+         console.log(c.default.label);\n"
+    );
+    let pairs = expect_unpack(&bundle, "bundle.js");
+    let provider = pairs
+        .iter()
+        .find(|(name, _)| name == "require_c.js")
+        .unwrap_or_else(|| panic!("inlined factory not split: {:?}", module_names(&pairs)));
+    assert!(
+        provider.1.contains("inlined-provider"),
+        "provider module holds the factory body:\n{}",
+        provider.1
+    );
+    let entry = &pairs.iter().find(|(name, _)| name == "entry.js").unwrap().1;
+    assert!(
+        entry.contains("require_c()") && !entry.contains("inlined-provider"),
+        "entry calls the named factory where the inlined call was:\n{entry}"
+    );
+}
+
+#[test]
+fn inlined_factory_in_an_expression_statement_becomes_its_own_module() {
+    let bundle = format!(
+        "{INLINE_HELPER}\n\
+         o((e, t) => {{ globalThis.sideEffect = \"inlined-statement-provider\"; }})();\n"
+    );
+    let pairs = expect_unpack(&bundle, "bundle.js");
+    assert!(
+        pairs.iter().any(|(name, _)| name == "require_inline.js"),
+        "inlined factory not split: {:?}",
+        module_names(&pairs)
+    );
+}
+
+#[test]
+fn inlined_factory_that_may_run_more_than_once_is_left_in_place() {
+    let cases = [
+        // Each call of `read` builds a new closure, so the factory runs on
+        // every call; one hoisted closure would run it once.
+        "function read() { return l(o((e, t) => { t.exports = { label: \"per-call-provider\" }; })()); }\n\
+         console.log(read(), read());\n",
+        // The same holds for each turn of a top-level loop.
+        "for (var i = 0; i < 2; i++) console.log(l(o((e, t) => { t.exports = { label: \"per-turn-provider\" }; })()));\n",
+        // A helper written after its declaration may not be the one the
+        // inlined call reads.
+        "o = (e) => e;\n\
+         var c = l(o((e, t) => { t.exports = { label: \"rewritten-helper-provider\" }; })());\n\
+         console.log(c);\n",
+    ];
+    for tail in cases {
+        let bundle = format!("{INLINE_HELPER}\n{tail}");
+        let output = wakaru_core::driver::test_support::unpack(
+            &bundle,
+            DecompileOptions {
+                filename: "bundle.js".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("unpack should succeed");
+        assert!(
+            !output
+                .modules
+                .iter()
+                .any(|(name, code)| name.starts_with("require_") || code.contains("require_")),
+            "factory moved out of code that may run it more than once:\n{tail}\n{:?}",
+            output.modules
+        );
+    }
+}
+
 #[test]
 fn commonjs_factory_emits_callable_module_exports_wrapper() {
     let bundle = r#"

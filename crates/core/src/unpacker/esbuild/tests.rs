@@ -1078,3 +1078,47 @@ fn parse_body_stmts(source: &str) -> Vec<Stmt> {
         .map(|item| item.stmt().expect("statement"))
         .collect()
 }
+
+#[test]
+fn inlined_factory_is_named_only_from_an_unwritten_helper_declared_before_it() {
+    let helper = "var o = (e, t) => () => (t || (e((t = { exports: {} }).exports, t, t.exports), e = null), t.exports);\n";
+    let name = |tail: &str| {
+        GLOBALS.set(&Default::default(), || {
+            let source = format!("{helper}{tail}");
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module =
+                super::super::parse_es_module(&source, "inline.js", cm.clone()).unwrap();
+            let helper_syms = collect_helper_syms(&module);
+            let changed =
+                super::inline_factories::name_inlined_factories(&mut module, &helper_syms);
+            (changed, emit_module_raw(&module, cm).unwrap())
+        })
+    };
+
+    let (changed, code) = name("var c = o((e, t) => { t.exports = 1; })();\n");
+    assert!(changed, "an inlined factory is named:\n{code}");
+    assert!(code.contains("require_c = o("), "{code}");
+    assert!(code.contains("c = require_c()"), "{code}");
+
+    for tail in [
+        // Written after its declaration.
+        "o = (e) => e;\nvar c = o((e, t) => { t.exports = 1; })();\n",
+        // Written inside a function.
+        "function reset() { o = null; }\nvar c = o((e, t) => { t.exports = 1; })();\n",
+        // Updated in place.
+        "o++;\nvar c = o((e, t) => { t.exports = 1; })();\n",
+        // Declared again by a hoisted function declaration.
+        "var c = o((e, t) => { t.exports = 1; })();\nfunction o() {}\n",
+    ] {
+        let (changed, code) = name(tail);
+        assert!(!changed, "helper is not proven unwritten:\n{code}");
+    }
+
+    // A local of the same name inside a function is another binding.
+    let (changed, code) =
+        name("function f(o) { o = 1; return o; }\nvar c = o((e, t) => { t.exports = 1; })();\n");
+    assert!(
+        changed,
+        "a shadowing local does not write the helper:\n{code}"
+    );
+}

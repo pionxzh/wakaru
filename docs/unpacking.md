@@ -82,7 +82,15 @@ attempted in order — first match wins:
    bundles from Bun are detected and split by this unpacker. rolldown's
    `__commonJSMin` has the same shape too, but rolldown passes each factory
    in an extra pair of parentheses (`__commonJSMin(((exports, module) =>
-   { … }))`); those parentheses are removed before detection. Helpers are
+   { … }))`); those parentheses are removed before detection. Its minifier
+   also inlines a factory used once into the call that runs it
+   (`c = l(o((e, t) => { … })())`); such a factory gets its own declarator
+   first (`require_c = o(…), c = l(require_c())`). Building the closure
+   earlier changes nothing, since the factory still runs at the call. This
+   is done only for a call in a top-level `var` initializer or expression
+   statement (not in a function, class, accessor, or loop, where the
+   factory could run more than once), and only for a helper declared by one
+   top-level `var` before the call and never written. Helpers are
    found only where the input declares them: a code-split chunk that imports
    `__commonJS` or `__esm` from another chunk is not split.
    Preserved Bun path comments are used only as filename hints for modules
