@@ -367,6 +367,42 @@ function* myGen() {
 }
 
 #[test]
+fn generator_comma_operator_yield_keeps_middle_expressions() {
+    // The pipeline splits this sequence before UnRegenerator runs, so only the
+    // rule on its own sees it: `before()` and `during()` run before the
+    // yield, in order.
+    let input = r#"
+var _marked = regeneratorRuntime.mark(myGen);
+function myGen() {
+  return regeneratorRuntime.wrap(function(e) {
+    while (true) {
+      switch (e.prev = e.next) {
+        case 0:
+          return e.next = 2, before(), during(), first();
+        case 2:
+          x = e.sent;
+          return e.next = 4, second(x);
+        case 4:
+        case "end":
+          return e.stop();
+      }
+    }
+  }, _marked, this);
+}
+"#;
+    let expected = r#"
+function* myGen() {
+  before();
+  during();
+  x = yield first();
+  yield second(x);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn multiple_generators_in_module() {
     let input = r#"
 var a = regeneratorRuntime.mark(gen1);

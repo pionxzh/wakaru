@@ -2077,8 +2077,20 @@ fn decode_babel_state_machine(
                             ));
                         }
                         DecodedReturn::Stop => {} // end of generator, drop
-                        DecodedReturn::CommaYield(expr) => {
-                            // return _ctx.next = N, value → yield value
+                        DecodedReturn::CommaYield {
+                            effects,
+                            value: expr,
+                        } => {
+                            // return _ctx.next = N, a(), value → a(); yield value
+                            for effect in effects {
+                                flat.push((
+                                    label,
+                                    Stmt::Expr(ExprStmt {
+                                        span: DUMMY_SP,
+                                        expr: effect,
+                                    }),
+                                ));
+                            }
                             flat.push((
                                 label,
                                 Stmt::Expr(ExprStmt {
@@ -2386,7 +2398,7 @@ fn dropped_edges_fall_through(
                         return false;
                     };
                     match decode_return(state_param, ret) {
-                        Some(DecodedReturn::CommaYield(_)) => {
+                        Some(DecodedReturn::CommaYield { .. }) => {
                             let target = match arg {
                                 Expr::Seq(seq) => seq
                                     .exprs
@@ -2703,7 +2715,12 @@ enum DecodedReturn {
     ReturnVoid,
     Throw(Box<Expr>),
     Stop,
-    CommaYield(Box<Expr>),
+    /// `return _ctx.next = N, ...effects, value`: the effects run before the
+    /// yield, in order.
+    CommaYield {
+        effects: Vec<Box<Expr>>,
+        value: Box<Expr>,
+    },
     DelegateYield {
         expr: Box<Expr>,
         result_name: Option<Atom>,
@@ -2739,7 +2756,8 @@ fn decode_return(state_param: &Ident, ret: &ReturnStmt) -> Option<DecodedReturn>
             // Check if first expression is _ctx.next = N
             if is_next_assign_expr(state_param, &seq.exprs[0]) {
                 let value = seq.exprs.last().unwrap().clone();
-                return Some(DecodedReturn::CommaYield(value));
+                let effects = seq.exprs[1..seq.exprs.len() - 1].to_vec();
+                return Some(DecodedReturn::CommaYield { effects, value });
             }
         }
     }
