@@ -11,7 +11,7 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::collections::HashSet;
 use crate::unpacker::BindingId;
-use crate::utils::paren::strip_parens;
+use crate::utils::paren::{strip_parens, strip_parens_owned};
 
 use super::bindings::{collect_write_bindings, TopLevelRefCollector};
 
@@ -86,6 +86,62 @@ pub(super) fn collect_helper_syms(module: &Module) -> HashSet<Atom> {
         }
     }
     syms
+}
+
+// rolldown emits esbuild's lazy-factory helpers but passes each factory in an
+// extra pair of parentheses: `__commonJSMin(((exports, module) => { … }))`.
+// Every reader of a factory argument (the detection gate, factory collection,
+// lazy-import planning) expects the bare function, so the parentheses are
+// removed once, before detection. Parentheses around a call argument carry no
+// meaning, so this changes no behavior.
+
+/// Whether a top-level helper call passes its factory in parentheses.
+pub(super) fn has_parenthesized_factory_args(module: &Module, helper_syms: &HashSet<Atom>) -> bool {
+    module.body.iter().any(|item| {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            return false;
+        };
+        var.decls.iter().any(|decl| {
+            let Some(Expr::Call(call)) = decl.init.as_deref() else {
+                return false;
+            };
+            call_target_helper_sym(call, helper_syms).is_some()
+                && matches!(call.args.as_slice(), [arg]
+                    if arg.spread.is_none() && is_parenthesized_factory(&arg.expr))
+        })
+    })
+}
+
+/// Remove the parentheses around the factory of each top-level helper call.
+pub(super) fn unwrap_parenthesized_factory_args(module: &mut Module, helper_syms: &HashSet<Atom>) {
+    for item in &mut module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for decl in &mut var.decls {
+            let Some(Expr::Call(call)) = decl.init.as_deref_mut() else {
+                continue;
+            };
+            if call_target_helper_sym(call, helper_syms).is_none() {
+                continue;
+            }
+            let [arg] = call.args.as_mut_slice() else {
+                continue;
+            };
+            if arg.spread.is_none() && is_parenthesized_factory(&arg.expr) {
+                let inner = std::mem::replace(&mut *arg.expr, Expr::Invalid(Default::default()));
+                *arg.expr = strip_parens_owned(inner);
+            }
+        }
+    }
+}
+
+fn is_parenthesized_factory(expr: &Expr) -> bool {
+    matches!(expr, Expr::Paren(_))
+        && matches!(
+            strip_parens(expr),
+            Expr::Arrow(_) | Expr::Fn(_) | Expr::Object(_)
+        )
 }
 
 pub(super) fn has_factory_detection_evidence(module: &Module, helper_syms: &HashSet<Atom>) -> bool {

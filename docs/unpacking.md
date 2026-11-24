@@ -79,7 +79,12 @@ attempted in order — first match wins:
 8. **esbuild / Bun** — scope-hoisted ESM namespace boundaries
    (`__export(ns, ...)`) and CJS factory helpers (`__commonJS` / `__esm`).
    Bun's bundler emits the same helper shapes as esbuild, so CJS-interop
-   bundles from Bun are detected and split by this unpacker.
+   bundles from Bun are detected and split by this unpacker. rolldown's
+   `__commonJSMin` has the same shape too, but rolldown passes each factory
+   in an extra pair of parentheses (`__commonJSMin(((exports, module) =>
+   { … }))`); those parentheses are removed before detection. Helpers are
+   found only where the input declares them: a code-split chunk that imports
+   `__commonJS` or `__esm` from another chunk is not split.
    Preserved Bun path comments are used only as filename hints for modules
    already found through structural helper patterns; they are not module
    boundaries by themselves. A lazy factory's object key is normally its

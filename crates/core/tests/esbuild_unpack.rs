@@ -130,6 +130,47 @@ fn esbuild_detects_minified_cjs_helper() {
 }
 
 #[test]
+fn factory_passed_in_parentheses_unpacks_like_a_bare_factory() {
+    // rolldown emits esbuild's lazy-factory helper but passes each factory in
+    // an extra pair of parentheses: `__commonJSMin(((exports, module) => { … }))`.
+    let helper = "var __commonJSMin = (cb, mod) => () => (mod || (cb((mod = { exports: {} }).exports, mod, mod.exports), cb = null), mod.exports);";
+    let factories = [
+        (
+            "require_a",
+            r#"(exports) => { exports.label = "provider-a"; }"#,
+        ),
+        (
+            "require_b",
+            r#"function(exports, module) { module.exports = { b: require_a().label + "-b" }; }"#,
+        ),
+    ];
+    let bundle = |open: &str, close: &str| {
+        let mut source = format!("{helper}\n");
+        for (name, factory) in factories {
+            source.push_str(&format!(
+                "var {name} = __commonJSMin({open}{factory}{close});\n"
+            ));
+        }
+        source.push_str("console.log(require_b().b);\n");
+        source
+    };
+
+    let bare = expect_unpack(&bundle("", ""), "bundle.js");
+    let parenthesized = expect_unpack(&bundle("(", ")"), "bundle.js");
+    let twice = expect_unpack(&bundle("((", "))"), "bundle.js");
+
+    let names =
+        |pairs: &[(String, String)]| pairs.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
+    assert!(
+        names(&bare).iter().any(|n| n == "require_a.js"),
+        "the bare form should split: {:?}",
+        names(&bare)
+    );
+    assert_eq!(parenthesized, bare);
+    assert_eq!(twice, bare);
+}
+
+#[test]
 fn commonjs_factory_emits_callable_module_exports_wrapper() {
     let bundle = r#"
 var m = (q, K) => () => (K || q((K = { exports: {} }).exports, K), K.exports);

@@ -35,8 +35,8 @@ use factories::{
     collect_commonjs_helper_syms, collect_factories, collect_factories_owned,
     collect_factory_analysis_bindings, collect_factory_body_bindings, collect_helper_syms,
     filter_helper_factory_declarators, has_factory_detection_evidence,
-    item_has_helper_factory_declarator, locally_exported_atoms, Factory, FactoryBodyRef,
-    PathCommentHints,
+    has_parenthesized_factory_args, item_has_helper_factory_declarator, locally_exported_atoms,
+    unwrap_parenthesized_factory_args, Factory, FactoryBodyRef, PathCommentHints,
 };
 use lazy_import::{plan_lazy_imports, LazyImportPlan};
 use ownership::{
@@ -70,6 +70,14 @@ pub(super) fn detect_from_module_with_source(
     if helper_syms.is_empty() && !has_export_helper_shape {
         return None;
     }
+
+    // Cloned only for a bundle that passes factories in parentheses (rolldown).
+    let unwrapped_module = has_parenthesized_factory_args(module, &helper_syms).then(|| {
+        let mut unwrapped = module.clone();
+        unwrap_parenthesized_factory_args(&mut unwrapped, &helper_syms);
+        unwrapped
+    });
+    let module = unwrapped_module.as_ref().unwrap_or(module);
 
     // Evidence of esbuild structure found — clone + resolve for binding analysis.
     let unresolved_mark = Mark::new();
@@ -145,6 +153,7 @@ pub(super) fn detect_from_owned_factory_module_with_source(
     positions: SourcePositions,
 ) -> Result<UnpackResult, Module> {
     let helper_syms = collect_helper_syms(&module);
+    unwrap_parenthesized_factory_args(&mut module, &helper_syms);
     if helper_syms.is_empty() || !has_factory_detection_evidence(&module, &helper_syms) {
         return Err(module);
     }
