@@ -25,10 +25,12 @@ use super::decl_utils::fresh_binding_ident;
 use super::helper_matcher::{
     binding_key, member_prop_name, removable_without_remaining_refs,
     remove_fn_decls_from_body_by_binding, remove_import_specifiers_by_binding,
-    remove_var_declarators_by_binding, static_member_prop_name, var_declarator_binding_key,
-    NumericRequireNamespaces,
+    remove_var_declarators_by_binding, static_member_prop_name, top_level_var_decls,
+    var_declarator_binding_key, NumericRequireNamespaces,
 };
-use super::transpiler_helper_utils::{BindingKey, LocalHelperContext, TranspilerHelperKind};
+use super::transpiler_helper_utils::{
+    remove_unused_helper_imports, BindingKey, LocalHelperContext, TranspilerHelperKind,
+};
 
 /// Convert inline `_objectWithoutPropertiesLoose` IIFEs to object rest destructuring.
 ///
@@ -169,6 +171,8 @@ fn run_un_object_rest(
             .iter()
             .map(|(key, kind)| (key.clone(), *kind)),
     );
+    let imported_helper_keys: Vec<BindingKey> =
+        cross_module_helpers.direct.keys().cloned().collect();
     if let Some(module_facts) = module_facts {
         let ts_rest_refs = collect_cross_module_ts_helper_refs(
             module,
@@ -386,6 +390,7 @@ fn run_un_object_rest(
     module.body = new_body;
     remove_unused_exclusion_array_decls(&mut module.body, &exclusion_arrays);
     swc_numeric_helper_namespaces.sweep_orphaned(&mut module.body);
+    remove_unused_helper_imports(module, &imported_helper_keys);
 
     // Remove named helper declarations if all call sites were replaced
     if !local_named_helpers.is_empty() {
@@ -1400,10 +1405,7 @@ fn collect_esbuild_object_rest_builtin_aliases(
 ) -> EsbuildObjectRestBuiltinAliases {
     let mut aliases = EsbuildObjectRestBuiltinAliases::default();
 
-    for item in &module.body {
-        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
-            continue;
-        };
+    for var in top_level_var_decls(module) {
         for decl in &var.decls {
             let Some(key) = var_declarator_binding_key(decl) else {
                 continue;
@@ -1457,6 +1459,19 @@ fn object_rest_builtin_alias_kind(expr: &Expr, unresolved_mark: Mark) -> Option<
     }
 }
 
+/// The esbuild `__objRest` helpers `module` declares, proven against its own
+/// `Object` builtin aliases, so a minified name is recognized too. Unpack
+/// facts use it to prove a helper another module imports.
+pub(crate) fn esbuild_object_rest_helper_bindings(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> Vec<BindingKey> {
+    let aliases = collect_esbuild_object_rest_builtin_aliases(module, unresolved_mark);
+    collect_mangled_esbuild_object_rest_helpers(module, &aliases)
+        .into_keys()
+        .collect()
+}
+
 fn collect_mangled_esbuild_object_rest_helpers(
     module: &Module,
     aliases: &EsbuildObjectRestBuiltinAliases,
@@ -1466,10 +1481,7 @@ fn collect_mangled_esbuild_object_rest_helpers(
     }
 
     let mut helpers = HashMap::default();
-    for item in &module.body {
-        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
-            continue;
-        };
+    for var in top_level_var_decls(module) {
         for decl in &var.decls {
             let Some(key) = var_declarator_binding_key(decl) else {
                 continue;

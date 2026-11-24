@@ -193,6 +193,15 @@ conservatively retain the graph.
 - `ModuleFactsMap` — keyed by normalized module specifier
   (handles `./foo`, `foo`, `foo.js` variants)
 
+After Phase 1 collects every module's facts,
+`ModuleFactsMap::propagate_relayed_helper_exports` carries helper facts
+through modules that only relay a helper: `export { h } from "./p"`, or a
+named import of `h` exported again. The relay exports the provider's own
+binding, so it is the same helper. A shared chunk that the scope-hoist split
+breaks into modules keeps its public file as such a relay, and consumers
+still import the helpers from that file. The pass runs to a fixpoint, so a
+chain of relays resolves.
+
 Extraction (`collect_module_facts`) reads the post-Stage-2 AST. Before Stage 2,
 `collect_commonjs_default_object` records only direct unresolved
 `module.exports = {...}` assignments and stable top-level object aliases. Its
@@ -777,12 +786,24 @@ Neither proof creates a default-object fact available to consumers.
   initialized through an assignment chain (`export const size = f.size =
   function () { … }`, as `UnEsm` recovers `module.exports.size = …`) is read
   at the chain's last value. A recognized transpiler helper is not listed.
-- **`UnObjectSpread`** — in multi-module unpack, recognizes object spread
-  helpers imported from a helper module whose default/named export fact proves
-  it is Babel's `extends` or `objectSpread` helper. This covers helpers split
-  into their own module before consumer calls are rewritten to object spread
-  syntax. The consumer import is retained for now because helper identity does
-  not by itself prove that evaluating the helper module is side-effect-free.
+- **`UnObjectSpread`** / **`UnObjectRest`** — in multi-module unpack,
+  recognize object spread and rest helpers imported from another module whose
+  default/named export fact proves it is an `ObjectSpread` / `Extends` or
+  `ObjectWithoutProperties` helper. This covers helpers split into their own
+  module before consumer calls are rewritten to object spread/rest syntax, and
+  esbuild's `__spreadValues`, `__spreadProps` and `__objRest` in a shared
+  chunk that each entry imports by name. esbuild's helpers are recognized
+  against the module's own `Object` builtin aliases, which a minifier renames
+  along with them, and `UnBuiltinAliases` inlines those aliases before
+  `UnEsm`. So unpack proves them on the input, before Phase 1 runs any rule
+  (`collect_esbuild_object_helper_exports`): a top-level binding declared
+  once and never written, exported through `export { … }` or in place
+  (`export var h = …`, as the scope-hoist split writes the bindings a piece
+  shares). The proof is
+  keyed by exported name, which late recovery keeps, and merged into the
+  facts after it (`add_proven_helper_exports`). A converted import's
+  specifier is dropped once nothing reads it; the import declaration stays,
+  so the provider still evaluates where it did.
 - **`UnRegenerator`** — in multi-module unpack, recognizes async-to-generator
   helpers that were hoisted into their own module and consumed through generated
   `require()`/interop aliases such as `h.default(...)`, but only when the target
@@ -793,10 +814,11 @@ Neither proof creates a default-object fact available to consumers.
   `EsbuildAsync` helper fact is proven from the exported binding's own
   initializer: a top-level `var`/`let`/`const` declared once and never
   written, whose name is `__async` (or a deconflicted or minified one) and
-  whose body builds an unresolved `new Promise` that steps a generator through
-  `.apply`. Proving it needs the module's `unresolved_mark`, so plain
+  whose body returns an unresolved `new Promise` that steps a generator
+  through `.apply` (`__asyncGenerator` also calls `.apply`, but returns an
+  iterator). Proving it needs the module's `unresolved_mark`, so plain
   `collect_module_facts` (no mark) never records it; unpack collects with
-  the mark. Namespace members and re-exports of the helper are not followed.
+  the mark. Namespace members of the helper are not followed.
   A converted import's named specifier is dropped once nothing reads it; the
   import declaration stays.
 - **`UnAsyncAwait`** — recognizes direct imports and namespace members only

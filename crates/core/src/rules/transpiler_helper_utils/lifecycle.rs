@@ -4,7 +4,7 @@
 
 use crate::collections::{HashMap, HashSet};
 
-use swc_core::ecma::ast::{Decl, Expr, Module, ModuleItem, Pat, Stmt};
+use swc_core::ecma::ast::{Decl, Expr, ImportSpecifier, Module, ModuleDecl, ModuleItem, Pat, Stmt};
 
 use super::*;
 use crate::rules::helper_matcher::remove_unused_helper_declarations;
@@ -119,4 +119,36 @@ pub(crate) fn remove_helper_declarations(
     remove_fn_decls_from_body_by_binding(body, &helper_keys);
     remove_var_declarators_by_binding(body, &helper_keys);
     remove_import_specifiers_by_binding(body, &helper_keys);
+}
+
+/// Drops the import specifiers of `helpers` that nothing reads any more, once
+/// a rule has rewritten every call of a helper imported from another module.
+/// The import declaration stays, even with no specifiers left, so the provider
+/// still runs where it did. Transform-only DCE keeps imports the input wrote,
+/// so the rule that consumed the helper removes its specifier.
+pub(crate) fn remove_unused_helper_imports(module: &mut Module, helpers: &[BindingKey]) {
+    if helpers.is_empty() {
+        return;
+    }
+    let uses = crate::analysis::binding_uses::BindingUseIndex::collect(module);
+    let unused: HashSet<&BindingKey> = helpers
+        .iter()
+        .filter(|key| uses.use_count(key) == 0)
+        .collect();
+    if unused.is_empty() {
+        return;
+    }
+    for item in &mut module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        import.specifiers.retain(|specifier| {
+            let local = match specifier {
+                ImportSpecifier::Named(named) => &named.local,
+                ImportSpecifier::Default(default) => &default.local,
+                ImportSpecifier::Namespace(_) => return true,
+            };
+            !unused.contains(&(local.sym.clone(), local.ctxt))
+        });
+    }
 }

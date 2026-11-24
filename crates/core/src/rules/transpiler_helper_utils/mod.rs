@@ -47,6 +47,7 @@ use matchers::{
 use lifecycle::{collect_top_level_callable_ref_graph, helper_dependencies_from_ref_graph};
 pub(crate) use lifecycle::{
     helpers_with_remaining_refs, remove_helper_declarations, remove_helpers_without_remaining_refs,
+    remove_unused_helper_imports,
 };
 pub(crate) use paths::detect_helper_from_path;
 use paths::{export_name_to_atom, named_import_is_helper};

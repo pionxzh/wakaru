@@ -43,9 +43,9 @@ use super::source_index::{build_composed_output_sourcemap, InputOrigin};
 use super::webpack_commonjs_runtime::normalize_webpack_commonjs_runtime;
 use super::{recover_late_esm_from_factory_iifes, LateEsmRecoveryOptions};
 use crate::facts::{
-    collect_commonjs_default_object, collect_commonjs_value_is_default,
-    collect_default_object_tail, collect_input_is_es_module, collect_marks_es_module,
-    collect_module_facts_with_helpers, collect_module_facts_with_mark,
+    add_proven_helper_exports, collect_commonjs_default_object, collect_commonjs_value_is_default,
+    collect_default_object_tail, collect_esbuild_object_helper_exports, collect_input_is_es_module,
+    collect_marks_es_module, collect_module_facts_with_helpers, collect_module_facts_with_mark,
     collect_never_names_es_module, collect_replaces_module_exports,
     collect_require_returns_exports_object, is_normalized_commonjs_default, HelperFacts,
     ModuleFactsMap,
@@ -216,6 +216,10 @@ struct Phase1aModule {
     /// Requiring the module returns its CommonJS `exports` object: it is
     /// neither ESM nor a webpack harmony module where `UnEsm` will see it.
     exports_object_writable: bool,
+    /// esbuild's object spread/rest helpers the module exports, proven on
+    /// the input before the rules inline the `Object` aliases they are
+    /// recognized by (`collect_esbuild_object_helper_exports`).
+    esbuild_object_helpers: Vec<(swc_core::atoms::Atom, crate::facts::HelperKind)>,
     /// The interop helpers the module exports, on the AST `UnEsm` will see.
     helpers: Option<ProviderHelpers>,
     /// The module's only export is one top-level `module.exports = v`, read
@@ -905,6 +909,8 @@ pub(super) fn unpack_multi_module_with_plan(
                 marks_es_module,
                 never_names_es_module: collect_never_names_es_module(&module),
             };
+            let esbuild_object_helpers =
+                collect_esbuild_object_helper_exports(&module, unresolved_mark);
             let require_edges = {
                 let span = tracing::info_span!("phase1: rules");
                 let _enter = span.enter();
@@ -945,6 +951,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 raw,
                 require_edges,
                 exports_object_writable,
+                esbuild_object_helpers,
                 helpers,
                 exports_whole_value,
                 required_whole_value,
@@ -961,6 +968,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 raw,
                 require_edges,
                 exports_object_writable,
+                esbuild_object_helpers,
                 helpers,
                 exports_whole_value,
                 required_whole_value,
@@ -977,6 +985,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 raw,
                 require_edges,
                 exports_object_writable,
+                esbuild_object_helpers,
                 helpers,
                 exports_whole_value,
                 required_whole_value,
@@ -1009,6 +1018,7 @@ pub(super) fn unpack_multi_module_with_plan(
             raw,
             require_edges,
             exports_object_writable: _,
+            esbuild_object_helpers,
             helpers: _,
             exports_whole_value: _,
             required_whole_value: _,
@@ -1077,10 +1087,9 @@ pub(super) fn unpack_multi_module_with_plan(
                 let _enter = span.enter();
                 if settled {
                     recover_late(module);
-                    return (
-                        collect_module_facts_with_mark(module, unresolved_mark),
-                        None,
-                    );
+                    let mut facts = collect_module_facts_with_mark(module, unresolved_mark);
+                    add_proven_helper_exports(&mut facts, esbuild_object_helpers.clone());
+                    return (facts, None);
                 }
                 // The helper facts and the rule range work on separate
                 // copies of the barrier AST, so they run in parallel: when
@@ -1114,7 +1123,9 @@ pub(super) fn unpack_multi_module_with_plan(
                 });
                 let ranged = keep_ranged.then(|| module.clone());
                 recover_late(module);
-                (collect_module_facts_with_helpers(module, helpers), ranged)
+                let mut facts = collect_module_facts_with_helpers(module, helpers);
+                add_proven_helper_exports(&mut facts, esbuild_object_helpers.clone());
+                (facts, ranged)
             };
             let (mut facts, prepared) = if can_reuse_phase1_ast {
                 let keep_ranged = !module
@@ -1232,6 +1243,7 @@ pub(super) fn unpack_multi_module_with_plan(
         }
     }
 
+    module_facts.propagate_relayed_helper_exports();
     let call_required_plan = crate::rules::CallRequiredPlan::build(&module_facts);
 
     // Cross-module barrier: resolve recovered filenames into a final rename

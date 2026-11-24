@@ -399,7 +399,7 @@ import _extends from "./helpers.js";
 var x = _extends({}, app_info, base_info);
 "#;
     let expected = r#"
-import _extends from "./helpers.js";
+import "./helpers.js";
 var x = { ...app_info, ...base_info };
 "#;
     assert_eq_normalized(
@@ -428,7 +428,7 @@ import { Z as _extends } from "./helpers.js";
 var x = _extends({}, app_info, base_info);
 "#;
     let expected = r#"
-import { Z as _extends } from "./helpers.js";
+import "./helpers.js";
 var x = { ...app_info, ...base_info };
 "#;
     assert_eq_normalized(
@@ -1116,7 +1116,6 @@ use(out);
 "#;
     assert_eq_normalized(&render(input), expected);
 }
-
 #[test]
 fn detects_terser_mangled_esbuild_spread_values_and_props_from_matrix() {
     // Produced by esbuild ES2017 output minified with Terser compress+mangle.

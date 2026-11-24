@@ -5474,3 +5474,163 @@ export { loadStatus };
     let entry = module_code(&modules, "entry-alpha.js");
     assert!(entry.contains("__async(this, null, function*"), "{entry}");
 }
+
+const ESBUILD_OBJECT_HELPERS: &str = r#"var __defProp = Object.defineProperty;
+var __defProps = Object.defineProperties;
+var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
+var __getOwnPropSymbols = Object.getOwnPropertySymbols;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __propIsEnum = Object.prototype.propertyIsEnumerable;
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __spreadValues = (a, b) => {
+  for (var prop in b || (b = {}))
+    if (__hasOwnProp.call(b, prop))
+      __defNormalProp(a, prop, b[prop]);
+  if (__getOwnPropSymbols)
+    for (var prop of __getOwnPropSymbols(b)) {
+      if (__propIsEnum.call(b, prop))
+        __defNormalProp(a, prop, b[prop]);
+    }
+  return a;
+};
+var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
+var __objRest = (source, exclude) => {
+  var target = {};
+  for (var prop in source)
+    if (__hasOwnProp.call(source, prop) && exclude.indexOf(prop) < 0)
+      target[prop] = source[prop];
+  if (source != null && __getOwnPropSymbols)
+    for (var prop of __getOwnPropSymbols(source)) {
+      if (exclude.indexOf(prop) < 0 && __propIsEnum.call(source, prop))
+        target[prop] = source[prop];
+    }
+  return target;
+};
+"#;
+
+// The same helpers as esbuild's minifier emits them: every helper and every
+// `Object` builtin alias renamed.
+const ESBUILD_MINIFIED_OBJECT_HELPERS: &str = r#"var u=Object.defineProperty,v=Object.defineProperties;var w=Object.getOwnPropertyDescriptors;var m=Object.getOwnPropertySymbols;var q=Object.prototype.hasOwnProperty,r=Object.prototype.propertyIsEnumerable;var p=(a,b,c)=>b in a?u(a,b,{enumerable:!0,configurable:!0,writable:!0,value:c}):a[b]=c,y=(a,b)=>{for(var c in b||(b={}))q.call(b,c)&&p(a,c,b[c]);if(m)for(var c of m(b))r.call(b,c)&&p(a,c,b[c]);return a},z=(a,b)=>v(a,w(b));var A=(a,b)=>{var c={};for(var d in a)q.call(a,d)&&b.indexOf(d)<0&&(c[d]=a[d]);if(a!=null&&m)for(var d of m(a))b.indexOf(d)<0&&r.call(a,d)&&(c[d]=a[d]);return c};
+"#;
+
+fn unpack_esm_files(files: &[(&str, &str)]) -> Vec<(String, String)> {
+    unpack_files(
+        files
+            .iter()
+            .map(|(filename, source)| UnpackInput {
+                filename: filename.to_string(),
+                source: source.to_string(),
+            })
+            .collect(),
+        DecompileOptions::default(),
+    )
+    .expect("esbuild split output should unpack")
+    .modules
+}
+
+const ESBUILD_OBJECT_HELPER_CONSUMER: &str = r#"import { __objRest, __spreadProps, __spreadValues } from "./chunk-shared.js";
+function withoutId(record) {
+  const _a = record, { id } = _a, rest = __objRest(_a, ["id"]);
+  return __spreadProps(__spreadValues({}, rest), { kept: id });
+}
+export { withoutId };
+"#;
+
+#[test]
+fn esbuild_object_helpers_imported_from_a_shared_chunk_recover_spread_and_rest() {
+    let shared =
+        format!("{ESBUILD_OBJECT_HELPERS}export {{ __spreadValues, __spreadProps, __objRest }};\n");
+    let modules = unpack_esm_files(&[
+        ("entry-alpha.js", ESBUILD_OBJECT_HELPER_CONSUMER),
+        ("chunk-shared.js", &shared),
+    ]);
+    let entry = module_code(&modules, "entry-alpha.js");
+    assert!(
+        entry.contains("...rest") && entry.contains("kept"),
+        "{entry}"
+    );
+    assert!(
+        !entry.contains("__objRest")
+            && !entry.contains("__spreadProps")
+            && !entry.contains("__spreadValues"),
+        "the consumed helper imports are dropped: {entry}"
+    );
+    assert!(entry.contains("./chunk-shared.js"), "{entry}");
+    assert_valid_module_graph(&modules);
+}
+
+#[test]
+fn minified_esbuild_object_helpers_from_a_shared_chunk_recover_spread_and_rest() {
+    // The helpers are recognized by the chunk's own `Object` aliases, which
+    // the minifier renamed along with them.
+    let shared = format!("{ESBUILD_MINIFIED_OBJECT_HELPERS}export{{y as a,z as b,A as c}};\n");
+    let consumer = r#"import{a as e,b as r,c as a}from"./chunk-shared.js";function s(o){let t=o,{id:n}=t,f=a(t,["id"]);return r(e({},f),{kept:n})}export{s as withoutId};
+"#;
+    let modules = unpack_esm_files(&[("entry-alpha.js", consumer), ("chunk-shared.js", &shared)]);
+    let entry = module_code(&modules, "entry-alpha.js");
+    assert!(
+        entry.contains("...rest") && entry.contains("kept"),
+        "{entry}"
+    );
+    assert!(
+        !entry.contains("({}, ") && !entry.contains("\"id\""),
+        "{entry}"
+    );
+    assert_valid_module_graph(&modules);
+}
+
+#[test]
+fn esbuild_object_helpers_relayed_through_another_module_recover_spread_and_rest() {
+    // Unpack can split a shared chunk into modules; its public file then
+    // only relays the helpers, and consumers still import them from it.
+    let shared =
+        format!("{ESBUILD_OBJECT_HELPERS}export {{ __spreadValues, __spreadProps, __objRest }};\n");
+    let relay = r#"import { __spreadValues } from "./chunk-helpers.js";
+export { __spreadValues };
+export { __spreadProps, __objRest } from "./chunk-helpers.js";
+"#;
+    let modules = unpack_esm_files(&[
+        ("entry-alpha.js", ESBUILD_OBJECT_HELPER_CONSUMER),
+        ("chunk-shared.js", relay),
+        ("chunk-helpers.js", &shared),
+    ]);
+    let entry = module_code(&modules, "entry-alpha.js");
+    assert!(
+        entry.contains("...rest") && !entry.contains("__spreadValues("),
+        "{entry}"
+    );
+    assert_valid_module_graph(&modules);
+}
+
+#[test]
+fn reassigned_minified_esbuild_spread_export_is_not_a_helper() {
+    let shared = format!(
+        "{ESBUILD_MINIFIED_OBJECT_HELPERS}globalThis.swap=()=>{{y=(a,b)=>b}};export{{y as a,z as b,A as c}};\n"
+    );
+    let consumer = r#"import{a as e}from"./chunk-shared.js";function s(o){return e({},o)}export{s as copy};
+"#;
+    let modules = unpack_esm_files(&[("entry-alpha.js", consumer), ("chunk-shared.js", &shared)]);
+    let entry = module_code(&modules, "entry-alpha.js");
+    assert!(entry.contains("({}, "), "{entry}");
+}
+
+#[test]
+fn minified_esbuild_object_helpers_exported_in_place_recover_spread_and_rest() {
+    // The scope-hoist split writes the bindings a piece shares as
+    // `export var`, beside the `Object` aliases the helpers read.
+    let shared = r#"var u=Object.defineProperty,v=Object.defineProperties;var w=Object.getOwnPropertyDescriptors;var m=Object.getOwnPropertySymbols;var q=Object.prototype.hasOwnProperty,r=Object.prototype.propertyIsEnumerable;var p=(a,b,c)=>b in a?u(a,b,{enumerable:!0,configurable:!0,writable:!0,value:c}):a[b]=c;export var y=(a,b)=>{for(var c in b||={})q.call(b,c)&&p(a,c,b[c]);if(m)for(var c of m(b))r.call(b,c)&&p(a,c,b[c]);return a};export var z=(a,b)=>v(a,w(b));export var A=(a,b)=>{var c={};for(var d in a)q.call(a,d)&&b.indexOf(d)<0&&(c[d]=a[d]);if(a!=null&&m)for(var d of m(a))b.indexOf(d)<0&&r.call(a,d)&&(c[d]=a[d]);return c};
+"#;
+    let consumer = r#"import{y as e,z as r,A as a}from"./chunk-shared.js";function s(o){let t=o,{id:n}=t,f=a(t,["id"]);return r(e({},f),{kept:n})}export{s as withoutId};
+"#;
+    let modules = unpack_esm_files(&[("entry-alpha.js", consumer), ("chunk-shared.js", shared)]);
+    let entry = module_code(&modules, "entry-alpha.js");
+    assert!(
+        entry.contains("...rest") && entry.contains("kept"),
+        "{entry}"
+    );
+    assert!(
+        !entry.contains("({}, ") && !entry.contains("\"id\""),
+        "{entry}"
+    );
+    assert_valid_module_graph(&modules);
+}

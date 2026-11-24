@@ -18,10 +18,12 @@ use super::cross_module_helper_refs::{
 };
 use super::helper_matcher::{
     binding_key, member_prop_name, removable_without_remaining_refs, remove_fn_decls_by_binding,
-    remove_var_declarators_by_binding, static_member_prop_name, var_declarator_binding_key,
-    NumericRequireNamespaces,
+    remove_var_declarators_by_binding, static_member_prop_name, top_level_var_decls,
+    var_declarator_binding_key, NumericRequireNamespaces,
 };
-use super::transpiler_helper_utils::{BindingKey, LocalHelperContext, TranspilerHelperKind};
+use super::transpiler_helper_utils::{
+    remove_unused_helper_imports, BindingKey, LocalHelperContext, TranspilerHelperKind,
+};
 
 use crate::utils::paren::strip_parens;
 
@@ -146,12 +148,12 @@ fn run_un_object_spread(
     local_helpers.extend(uninitialized_object_spread_stubs.clone());
     local_helpers.extend(mangled_esbuild_helpers.clone());
     let mut helpers = local_helpers.clone();
+    let mut imported_helper_keys: Vec<BindingKey> = Vec::new();
     if let Some(module_facts) = module_facts {
-        helpers.extend(collect_cross_module_object_spread_helpers(
-            module,
-            module_facts,
-            current_filename,
-        ));
+        let imported =
+            collect_cross_module_object_spread_helpers(module, module_facts, current_filename);
+        imported_helper_keys.extend(imported.keys().cloned());
+        helpers.extend(imported);
     }
     let cross_module_helper_refs = module_facts
         .map(|facts| {
@@ -212,6 +214,7 @@ fn run_un_object_spread(
     };
     module.visit_mut_with(&mut replacer);
     swc_numeric_helper_namespaces.sweep_orphaned(&mut module.body);
+    remove_unused_helper_imports(module, &imported_helper_keys);
 
     // Only remove root helpers whose calls were fully transformed. Dependencies
     // referenced by retained helpers must stay with those helpers.
@@ -351,6 +354,27 @@ fn remove_unused_helper_dependency_decls(module: &mut Module, candidates: &HashS
     remove_var_declarators_by_binding(&mut module.body, &removable);
 }
 
+/// The esbuild `__spreadValues` / `__spreadProps` helpers `module` declares,
+/// proven against its own `Object` builtin aliases, so a minified name is
+/// recognized too. Unpack facts use it to prove a helper another module
+/// imports.
+pub(crate) fn esbuild_object_spread_helper_bindings(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> Vec<BindingKey> {
+    let aliases = collect_esbuild_object_builtin_aliases(module, Some(unresolved_mark));
+    let define_normal_prop_helpers = if aliases.has_spread_values_signals() {
+        collect_esbuild_define_normal_prop_helpers(module, &aliases)
+    } else {
+        HashSet::default()
+    };
+    collect_mangled_esbuild_object_spread_helpers(module, &aliases, &define_normal_prop_helpers)
+        .into_iter()
+        .filter(|(_, kind)| *kind == TranspilerHelperKind::ObjectSpread)
+        .map(|(key, _)| key)
+        .collect()
+}
+
 fn collect_mangled_esbuild_object_spread_helpers(
     module: &Module,
     aliases: &EsbuildObjectBuiltinAliases,
@@ -361,10 +385,7 @@ fn collect_mangled_esbuild_object_spread_helpers(
     }
 
     let mut helpers = HashMap::default();
-    for item in &module.body {
-        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
-            continue;
-        };
+    for var in top_level_var_decls(module) {
         for decl in &var.decls {
             let Some(key) = var_declarator_binding_key(decl) else {
                 continue;
@@ -411,10 +432,7 @@ fn collect_esbuild_object_builtin_aliases(
 ) -> EsbuildObjectBuiltinAliases {
     let mut aliases = EsbuildObjectBuiltinAliases::default();
 
-    for item in &module.body {
-        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
-            continue;
-        };
+    for var in top_level_var_decls(module) {
         for decl in &var.decls {
             let Some(key) = var_declarator_binding_key(decl) else {
                 continue;
@@ -489,10 +507,7 @@ fn collect_esbuild_define_normal_prop_helpers(
     aliases: &EsbuildObjectBuiltinAliases,
 ) -> HashSet<BindingKey> {
     let mut helpers = HashSet::default();
-    for item in &module.body {
-        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
-            continue;
-        };
+    for var in top_level_var_decls(module) {
         for decl in &var.decls {
             let Some(key) = var_declarator_binding_key(decl) else {
                 continue;

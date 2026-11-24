@@ -515,7 +515,9 @@ use(name, rest_info);
 }
 
 #[test]
-fn named_owp_cross_module_direct_helper_keeps_import() {
+fn named_owp_cross_module_direct_helper_keeps_the_module_import() {
+    // The consumed specifier goes; the import stays, so the helper module
+    // still evaluates where it did.
     let mut facts = ModuleFactsMap::new();
     facts.insert(
         "helpers.js",
@@ -535,7 +537,7 @@ var name = app_info.name, rest_info = objectWithoutProperties(app_info, ["name"]
 use(name, rest_info);
 "#;
     let expected = r#"
-import { rest as objectWithoutProperties } from "./helpers.js";
+import "./helpers.js";
 var { name, ...rest_info } = app_info;
 use(name, rest_info);
 "#;

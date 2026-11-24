@@ -3,7 +3,7 @@ use crate::collections::HashSet;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     BindingIdent, Callee, Decl, Expr, Ident, ImportSpecifier, Lit, MemberProp, Module, ModuleItem,
-    Pat, Stmt, VarDeclarator,
+    Pat, Stmt, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -42,6 +42,23 @@ pub(crate) fn static_member_prop_name(prop: &MemberProp) -> Option<&str> {
 
 pub(crate) fn member_prop_name(prop: &MemberProp, name: &str) -> bool {
     static_member_prop_name(prop) == Some(name)
+}
+
+/// The module's top-level `var`/`let`/`const` declarations, exported in
+/// place (`export var h = …`) or not. Unpack's scope-hoist split writes the
+/// bindings a piece shares as `export var`, so a helper matcher that reads
+/// only plain declarations misses them there.
+pub(crate) fn top_level_var_decls(module: &Module) -> impl Iterator<Item = &VarDecl> {
+    module.body.iter().filter_map(|item| match item {
+        ModuleItem::Stmt(swc_core::ecma::ast::Stmt::Decl(Decl::Var(var))) => Some(var.as_ref()),
+        ModuleItem::ModuleDecl(swc_core::ecma::ast::ModuleDecl::ExportDecl(export)) => {
+            match &export.decl {
+                Decl::Var(var) => Some(var.as_ref()),
+                _ => None,
+            }
+        }
+        _ => None,
+    })
 }
 
 pub(crate) fn var_declarator_binding_key(decl: &VarDeclarator) -> Option<BindingKey> {

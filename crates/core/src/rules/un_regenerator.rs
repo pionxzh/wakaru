@@ -25,7 +25,9 @@ use super::state_machine::{
     invert_condition, stmts_contain_state_opcode_return, CatchBindings, ForwardJumpJoin,
     IndexLoopContinueMode, OpcodeReturnScan, StateMachineProgram,
 };
-use super::transpiler_helper_utils::{BindingKey, LocalHelperContext, TranspilerHelperKind};
+use super::transpiler_helper_utils::{
+    remove_unused_helper_imports, BindingKey, LocalHelperContext, TranspilerHelperKind,
+};
 use super::un_async_await::{
     hygienically_move_callback_locals, try_transform_ts_generator_body, AsyncHelperContext,
 };
@@ -208,7 +210,7 @@ fn run_un_regenerator(
     }
 
     remove_unused_helper_decls(module, &local_esbuild_async_helpers);
-    remove_unused_named_imports(module, &imported_esbuild_async_keys);
+    remove_unused_helper_imports(module, &imported_esbuild_async_keys);
     remove_unused_helper_decls(module, &esbuild_yield_star_helpers);
 }
 
@@ -4790,34 +4792,6 @@ fn remove_consumed_mark_declarations(module: &mut Module, consumed_marks: &[Bind
 fn remove_unused_helper_decls(module: &mut Module, helpers: &[BindingKey]) {
     let candidates = helpers.iter().cloned().collect();
     remove_unused_helper_declarations(module, &candidates);
-}
-
-/// Drops the named import specifiers of `helpers` that nothing reads any more.
-/// The import declaration stays, even with no specifiers left, so the provider
-/// still runs where it did.
-fn remove_unused_named_imports(module: &mut Module, helpers: &[BindingKey]) {
-    if helpers.is_empty() {
-        return;
-    }
-    let uses = crate::analysis::binding_uses::BindingUseIndex::collect(module);
-    let unused: Vec<&BindingKey> = helpers
-        .iter()
-        .filter(|key| uses.use_count(key) == 0)
-        .collect();
-    if unused.is_empty() {
-        return;
-    }
-    for item in &mut module.body {
-        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
-            continue;
-        };
-        import.specifiers.retain(|specifier| {
-            let ImportSpecifier::Named(named) = specifier else {
-                return true;
-            };
-            !unused.contains(&&(named.local.sym.clone(), named.local.ctxt))
-        });
-    }
 }
 
 // ============================================================

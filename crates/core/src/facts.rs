@@ -18,8 +18,8 @@ use swc_core::common::Mark;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Decl, DefaultDecl, ExportDecl,
     ExportSpecifier, Expr, Function, ImportSpecifier, Lit, MemberProp, Module, ModuleDecl,
-    ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt,
-    SuperPropExpr, ThisExpr,
+    ModuleExportName, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
+    SimpleAssignTarget, Stmt, SuperPropExpr, ThisExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -310,6 +310,76 @@ impl ModuleFactsMap {
     /// canonical key stored in this map.
     pub fn resolve_key_from(&self, from_filename: Option<&str>, specifier: &str) -> Option<String> {
         resolve_module_key(|key| self.inner.contains_key(key), from_filename, specifier)
+    }
+
+    /// Carries helper facts through modules that only relay a helper:
+    /// `export { h } from "./p"`, or `import { h } from "./p"` with `h`
+    /// exported again. The relay exports the provider's own binding (an
+    /// import binding is never reassigned), so it is the same helper. A
+    /// shared chunk that unpack splits into modules keeps its public file as
+    /// such a relay, and consumers import the helpers from that file.
+    ///
+    /// Runs to a fixpoint so a chain of relays resolves.
+    pub(crate) fn propagate_relayed_helper_exports(&mut self) {
+        loop {
+            let mut additions: Vec<(String, HelperExportFact)> = Vec::new();
+            for (key, facts) in &self.inner {
+                for export in &facts.exports {
+                    if facts
+                        .helper_exports
+                        .iter()
+                        .any(|helper| helper.exported == export.exported)
+                    {
+                        continue;
+                    }
+                    let relayed = match &export.local {
+                        Some(local) => facts
+                            .imports
+                            .iter()
+                            .find(|import| &import.local == local)
+                            .and_then(|import| match &import.kind {
+                                ImportKind::Named(imported) => {
+                                    Some((import.source.clone(), imported.clone()))
+                                }
+                                _ => None,
+                            }),
+                        None => facts
+                            .reexports
+                            .iter()
+                            .find(|reexport| reexport.exported == export.exported)
+                            .map(|reexport| (reexport.source.clone(), reexport.imported.clone())),
+                    };
+                    let Some((source, imported)) = relayed else {
+                        continue;
+                    };
+                    let Some(kind) = self.get_from(Some(key), &source).and_then(|provider| {
+                        provider
+                            .helper_exports
+                            .iter()
+                            .find(|helper| helper.exported == imported)
+                            .map(|helper| helper.kind)
+                    }) else {
+                        continue;
+                    };
+                    additions.push((
+                        key.clone(),
+                        HelperExportFact {
+                            exported: export.exported.clone(),
+                            local: export.local.clone(),
+                            kind,
+                        },
+                    ));
+                }
+            }
+            if additions.is_empty() {
+                return;
+            }
+            for (key, helper) in additions {
+                if let Some(facts) = self.inner.get_mut(&key) {
+                    facts.helper_exports.push(helper);
+                }
+            }
+        }
     }
 
     /// Number of modules in the map.
@@ -1338,6 +1408,110 @@ fn collect_helper_exports(
     }
 
     (helper_exports, exports_any_helper)
+}
+
+/// The exported names of esbuild's object spread/rest helpers
+/// (`__spreadValues`, `__spreadProps`, `__objRest`), proven on `module`
+/// before late recovery. esbuild's helpers are recognized against the
+/// module's own `Object` builtin aliases, which a minifier renames along with
+/// them; late recovery then inlines or renames those aliases and folds
+/// `export { y as a }` into the declaration, so the proof has to run first.
+/// It is keyed by exported name, which late recovery keeps, and merged with
+/// [`add_proven_helper_exports`].
+pub(crate) fn collect_esbuild_object_helper_exports(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> Vec<(Atom, HelperKind)> {
+    let spread = crate::rules::esbuild_object_spread_helper_bindings(module, unresolved_mark)
+        .into_iter()
+        .map(|key| (key, HelperKind::ObjectSpread));
+    let rest = crate::rules::esbuild_object_rest_helper_bindings(module, unresolved_mark)
+        .into_iter()
+        .map(|key| (key, HelperKind::ObjectWithoutProperties));
+    let helpers: Vec<(BindingKey, HelperKind)> = spread.chain(rest).collect();
+    if helpers.is_empty() {
+        return Vec::new();
+    }
+    // A proven helper declared once and never written, exported through
+    // `export { … }` or in place (`export var h = …`, as the scope-hoist
+    // split writes the bindings a piece shares).
+    let proven_kind = |ident: &swc_core::ecma::ast::Ident| {
+        let key = (ident.sym.clone(), ident.ctxt);
+        let (_, kind) = helpers.iter().find(|(helper, _)| *helper == key)?;
+        (top_level_var_init(module, &ident.sym).is_some()
+            && binding_is_never_reassigned(module, &key))
+        .then_some(*kind)
+    };
+    let mut exports = Vec::new();
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(decl) = item else {
+            continue;
+        };
+        match decl {
+            ModuleDecl::ExportNamed(named) if named.src.is_none() => {
+                for spec in &named.specifiers {
+                    let ExportSpecifier::Named(spec) = spec else {
+                        continue;
+                    };
+                    let ModuleExportName::Ident(orig) = &spec.orig else {
+                        continue;
+                    };
+                    let Some(kind) = proven_kind(orig) else {
+                        continue;
+                    };
+                    let exported = spec
+                        .exported
+                        .as_ref()
+                        .map(export_name_to_atom)
+                        .unwrap_or_else(|| orig.sym.clone());
+                    exports.push((exported, kind));
+                }
+            }
+            ModuleDecl::ExportDecl(ExportDecl {
+                decl: Decl::Var(var),
+                ..
+            }) => {
+                for declarator in &var.decls {
+                    let Pat::Ident(binding) = &declarator.name else {
+                        continue;
+                    };
+                    if let Some(kind) = proven_kind(&binding.id) {
+                        exports.push((binding.id.sym.clone(), kind));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    exports
+}
+
+/// Adds helper facts proven before late recovery
+/// ([`collect_esbuild_object_helper_exports`]) for names `facts` still
+/// exports and has no helper fact for yet.
+pub(crate) fn add_proven_helper_exports(facts: &mut ModuleFacts, proven: Vec<(Atom, HelperKind)>) {
+    for (exported, kind) in proven {
+        if facts
+            .helper_exports
+            .iter()
+            .any(|helper| helper.exported == exported)
+        {
+            continue;
+        }
+        let Some(export) = facts
+            .exports
+            .iter()
+            .find(|export| export.exported == exported)
+        else {
+            continue;
+        };
+        let local = export.local.clone();
+        facts.helper_exports.push(HelperExportFact {
+            exported,
+            local,
+            kind,
+        });
+    }
 }
 
 /// The binding and initializer of the only top-level `var`/`let`/`const`

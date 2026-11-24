@@ -828,7 +828,7 @@ export const v = ext({}, a);
 #[test]
 fn standard_unpack_facts_prove_aliased_helper() {
     let expected = r#"
-import ext from "./module-11.js";
+import "./module-11.js";
 const a = {
     x: 1
 };
