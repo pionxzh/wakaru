@@ -94,7 +94,7 @@ See [supported inputs](https://wakarujs.com/docs/reference/supported-inputs) for
 We test both behavior and recovery against real compiler and minifier output:
 
 - **62,177 passing Test262 semantic round trips.** [Methodology and baseline](./docs/test262-roundtrip.md).
-- **94.6% pattern recovery across 2,994 transpiler × minifier test shapes.** [Per-matrix results](./scripts/repro/stats.json).
+- **95.4% pattern recovery across 2,997 transpiler × minifier test shapes.** [Per-matrix results](./scripts/repro/stats.json).
 
 ## Use cases
 
