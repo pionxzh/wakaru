@@ -2210,10 +2210,12 @@ fn decode_babel_state_machine(
                 continue;
             }
             let merged = if let Some((_, prev)) = output.last() {
-                extract_yield_from_stmt(prev).map(|arg| {
+                extract_yield_from_stmt(prev).map(|(arg, delegate)| {
+                    // Keep `yield*`: Babel 7.27+ reads a delegate's result
+                    // through `_ctx.v` like any other resume value.
                     let yield_expr = Box::new(Expr::Yield(YieldExpr {
                         span: DUMMY_SP,
-                        delegate: false,
+                        delegate,
                         arg: Some(arg),
                     }));
                     let mut replacer = SentReplacer {
@@ -3216,10 +3218,12 @@ fn stmt_uses_sent(state_param: &Ident, stmt: &Stmt) -> bool {
     f.found
 }
 
-fn extract_yield_from_stmt(stmt: &Stmt) -> Option<Box<Expr>> {
+/// The argument of an expression-statement yield, and whether it is a
+/// `yield*`.
+fn extract_yield_from_stmt(stmt: &Stmt) -> Option<(Box<Expr>, bool)> {
     if let Stmt::Expr(ExprStmt { expr, .. }) = stmt {
         if let Expr::Yield(y) = expr.as_ref() {
-            return y.arg.clone();
+            return y.arg.clone().map(|arg| (arg, y.delegate));
         }
     }
     None

@@ -849,6 +849,39 @@ function* read_all(source) {
 }
 
 #[test]
+fn generator_short_delegate_yield_result_keeps_the_delegation() {
+    // Babel 7.27+ reads a delegate's result through `_ctx.v`, the same slot
+    // as a plain resume value; merging that read must keep `yield*`.
+    let input = r#"
+var _marked = _regenerator().m(outer);
+function outer() {
+  var r;
+  return _regenerator().w(function(_context) {
+    while (1) switch (_context.n) {
+      case 0:
+        return _context.d(_regeneratorValues(inner()), 1);
+      case 1:
+        r = _context.v;
+        _context.n = 2;
+        return r;
+      case 2:
+        return _context.a(2);
+    }
+  }, _marked);
+}
+"#;
+    let expected = r#"
+function* outer() {
+  var r;
+  r = yield* inner();
+  yield r;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn generator_short_delegate_yield_restored() {
     let input = r#"
 var _marked = _regenerator().m(read_all);
