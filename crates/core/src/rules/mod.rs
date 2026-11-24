@@ -1,6 +1,7 @@
 mod arg_rest;
 mod arrow_function;
 mod arrow_return;
+mod await_spill_temps;
 pub(crate) mod binding_facts;
 pub(crate) mod builtin_aliases;
 mod call_required;

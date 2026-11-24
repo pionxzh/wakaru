@@ -369,7 +369,12 @@ effects (`a[f()]`, `a[i++]`) never matches its second read. The assumption
 covers getters and proxies on the base only.
 
 Affects: `UnOptionalChaining` (repeated-base forms), `UnNullishCoalescing`
-(repeated-base forms).
+(repeated-base forms), and `UnRegenerator`'s method-call fold. Regenerator
+lowers `o.m(a, await b)` to `t0 = o; t1 = a; t2 = yield b;
+t0.m.call(t0, t1, t2)`, which reads `o.m` after the await; the recovered
+`o.m(a, await b)` reads it before the arguments, as the source did. A getter
+on `m`, or a write to `o.m` while the await is pending, would see the
+difference. That fold applies at every level, unlike the forms below.
 
 Level:
 

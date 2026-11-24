@@ -681,7 +681,8 @@ fn generator_recovers_conditional_yield_default_via_forward_jump() {
     // Babel 7.28+ `_regenerator().w` lowers `x == null ? yield f() : x` into a
     // forward conditional jump: `if (!(x == null)) { _context.n = 2; break; }`
     // selecting between the yield branch and the fallthrough. The decoder must
-    // structure that jump back into a ternary assignment.
+    // structure that jump back into a ternary assignment. The `_t` join temp
+    // then folds into its single read like an await-spill temp.
     let input = r#"
 var _marked = _regenerator().m(pick);
 function pick(input) {
@@ -710,9 +711,8 @@ function pick(input) {
 "#;
     let expected = r#"
 function* pick(input) {
-  var source, _t;
-  _t = !(input == null) ? input : yield load_user();
-  source = _t;
+  var source;
+  source = !(input == null) ? input : yield load_user();
   return source;
 }
 "#;
@@ -4694,4 +4694,669 @@ function _run() {
         !output.contains("if (a.more())"),
         "the loop test must not become a one-shot guard, got:\n{output}"
     );
+}
+
+// ── Await-spill temps ────────────────────────────────────────────────────────
+
+/// Recovered form of the `await_spill_*` inputs below (one source, two Babel
+/// versions).
+const AWAIT_SPILL_EXPECTED: &str = r#"
+export async function signIn(url, opts, callbackUrl) {
+  let res;
+  res = await fetch(url, {
+    method: "post",
+    body: new URLSearchParams(merge(opts, {}, {
+      csrfToken: await getToken(),
+      callbackUrl,
+      json: true
+    }))
+  });
+  return res.json();
+}
+export async function simple(a, b) {
+  return f(a, await b);
+}
+export async function pair(a, y) {
+  let list;
+  let record;
+  list = [a, await y];
+  record = {
+    a,
+    b: await y
+  };
+  return [list, record];
+}
+export async function nested(a, b, c) {
+  return g(a, h(b, await c));
+}
+export async function make(a, b) {
+  return new Widget(a, await b);
+}
+export async function send(client, a, b) {
+  return client.post(a, await b);
+}
+"#;
+
+#[test]
+fn await_spill_temps_fold_back_legacy() {
+    // Regenerator spills every operand evaluated before an `await` into a
+    // `_context.tN` slot. Each slot is written once and read once, right
+    // after the spill, so the source expression comes back with `await`
+    // inline and no temp locals.
+    // producer babel@7.23 preset-env (ie 11)
+    let input = r#"
+function asyncGeneratorStep(gen, resolve, reject, _next, _throw, key, arg) { try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; } if (info.done) { resolve(value); } else { Promise.resolve(value).then(_next, _throw); } }
+function _asyncToGenerator(fn) { return function () { var self = this, args = arguments; return new Promise(function (resolve, reject) { var gen = fn.apply(self, args); function _next(value) { asyncGeneratorStep(gen, resolve, reject, _next, _throw, "next", value); } function _throw(err) { asyncGeneratorStep(gen, resolve, reject, _next, _throw, "throw", err); } _next(undefined); }); }; }
+export function signIn(_x, _x2, _x3) {
+  return _signIn.apply(this, arguments);
+}
+function _signIn() {
+  _signIn = _asyncToGenerator(/*#__PURE__*/_regeneratorRuntime().mark(function _callee(url, opts, cb) {
+    var res;
+    return _regeneratorRuntime().wrap(function _callee$(_context) {
+      while (1) switch (_context.prev = _context.next) {
+        case 0:
+          _context.t0 = fetch;
+          _context.t1 = url;
+          _context.t2 = URLSearchParams;
+          _context.t3 = merge;
+          _context.t4 = opts;
+          _context.t5 = {};
+          _context.next = 8;
+          return getToken();
+        case 8:
+          _context.t6 = _context.sent;
+          _context.t7 = cb;
+          _context.t8 = {
+            csrfToken: _context.t6,
+            callbackUrl: _context.t7,
+            json: true
+          };
+          _context.t9 = (0, _context.t3)(_context.t4, _context.t5, _context.t8);
+          _context.t10 = new _context.t2(_context.t9);
+          _context.t11 = {
+            method: "post",
+            body: _context.t10
+          };
+          _context.next = 16;
+          return (0, _context.t0)(_context.t1, _context.t11);
+        case 16:
+          res = _context.sent;
+          return _context.abrupt("return", res.json());
+        case 18:
+        case "end":
+          return _context.stop();
+      }
+    }, _callee);
+  }));
+  return _signIn.apply(this, arguments);
+}
+export function simple(_x4, _x5) {
+  return _simple.apply(this, arguments);
+}
+function _simple() {
+  _simple = _asyncToGenerator(/*#__PURE__*/_regeneratorRuntime().mark(function _callee2(a, b) {
+    return _regeneratorRuntime().wrap(function _callee2$(_context2) {
+      while (1) switch (_context2.prev = _context2.next) {
+        case 0:
+          _context2.t0 = f;
+          _context2.t1 = a;
+          _context2.next = 4;
+          return b;
+        case 4:
+          _context2.t2 = _context2.sent;
+          return _context2.abrupt("return", (0, _context2.t0)(_context2.t1, _context2.t2));
+        case 6:
+        case "end":
+          return _context2.stop();
+      }
+    }, _callee2);
+  }));
+  return _simple.apply(this, arguments);
+}
+export function pair(_x6, _x7) {
+  return _pair.apply(this, arguments);
+}
+function _pair() {
+  _pair = _asyncToGenerator(/*#__PURE__*/_regeneratorRuntime().mark(function _callee3(x, y) {
+    var list, record;
+    return _regeneratorRuntime().wrap(function _callee3$(_context3) {
+      while (1) switch (_context3.prev = _context3.next) {
+        case 0:
+          _context3.t0 = x;
+          _context3.next = 3;
+          return y;
+        case 3:
+          _context3.t1 = _context3.sent;
+          list = [_context3.t0, _context3.t1];
+          _context3.t2 = x;
+          _context3.next = 8;
+          return y;
+        case 8:
+          _context3.t3 = _context3.sent;
+          record = {
+            a: _context3.t2,
+            b: _context3.t3
+          };
+          return _context3.abrupt("return", [list, record]);
+        case 11:
+        case "end":
+          return _context3.stop();
+      }
+    }, _callee3);
+  }));
+  return _pair.apply(this, arguments);
+}
+export function nested(_x8, _x9, _x0) {
+  return _nested.apply(this, arguments);
+}
+function _nested() {
+  _nested = _asyncToGenerator(/*#__PURE__*/_regeneratorRuntime().mark(function _callee4(a, b, c) {
+    return _regeneratorRuntime().wrap(function _callee4$(_context4) {
+      while (1) switch (_context4.prev = _context4.next) {
+        case 0:
+          _context4.t0 = g;
+          _context4.t1 = a;
+          _context4.t2 = h;
+          _context4.t3 = b;
+          _context4.next = 6;
+          return c;
+        case 6:
+          _context4.t4 = _context4.sent;
+          _context4.t5 = (0, _context4.t2)(_context4.t3, _context4.t4);
+          return _context4.abrupt("return", (0, _context4.t0)(_context4.t1, _context4.t5));
+        case 9:
+        case "end":
+          return _context4.stop();
+      }
+    }, _callee4);
+  }));
+  return _nested.apply(this, arguments);
+}
+export function make(_x1, _x10) {
+  return _make.apply(this, arguments);
+}
+function _make() {
+  _make = _asyncToGenerator(/*#__PURE__*/_regeneratorRuntime().mark(function _callee5(a, b) {
+    return _regeneratorRuntime().wrap(function _callee5$(_context5) {
+      while (1) switch (_context5.prev = _context5.next) {
+        case 0:
+          _context5.t0 = Widget;
+          _context5.t1 = a;
+          _context5.next = 4;
+          return b;
+        case 4:
+          _context5.t2 = _context5.sent;
+          return _context5.abrupt("return", new _context5.t0(_context5.t1, _context5.t2));
+        case 6:
+        case "end":
+          return _context5.stop();
+      }
+    }, _callee5);
+  }));
+  return _make.apply(this, arguments);
+}
+export function send(_x11, _x12, _x13) {
+  return _send.apply(this, arguments);
+}
+function _send() {
+  _send = _asyncToGenerator(/*#__PURE__*/_regeneratorRuntime().mark(function _callee6(client, a, b) {
+    return _regeneratorRuntime().wrap(function _callee6$(_context6) {
+      while (1) switch (_context6.prev = _context6.next) {
+        case 0:
+          _context6.t0 = client;
+          _context6.t1 = a;
+          _context6.next = 4;
+          return b;
+        case 4:
+          _context6.t2 = _context6.sent;
+          return _context6.abrupt("return", _context6.t0.post.call(_context6.t0, _context6.t1, _context6.t2));
+        case 6:
+        case "end":
+          return _context6.stop();
+      }
+    }, _callee6);
+  }));
+  return _send.apply(this, arguments);
+}
+"#;
+    assert_eq_normalized(&render(input), AWAIT_SPILL_EXPECTED);
+}
+
+#[test]
+fn await_spill_temps_fold_back_compact() {
+    // Babel 7.29's compact runtime spills into function-scoped `_t`, `_tN`
+    // locals instead of `_context` slots.
+    // producer babel@7.29 preset-env (ie 11)
+    let input = r#"
+function asyncGeneratorStep(n, t, e, r, o, a, c) { try { var i = n[a](c), u = i.value; } catch (n) { return void e(n); } i.done ? t(u) : Promise.resolve(u).then(r, o); }
+function _asyncToGenerator(n) { return function () { var t = this, e = arguments; return new Promise(function (r, o) { var a = n.apply(t, e); function _next(n) { asyncGeneratorStep(a, r, o, _next, _throw, "next", n); } function _throw(n) { asyncGeneratorStep(a, r, o, _next, _throw, "throw", n); } _next(void 0); }); }; }
+export function signIn(_x, _x2, _x3) {
+  return _signIn.apply(this, arguments);
+}
+function _signIn() {
+  _signIn = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee(url, opts, cb) {
+    var res, _t, _t2, _t3, _t4, _t5, _t6, _t7, _t8, _t9, _t0;
+    return _regenerator().w(function (_context) {
+      while (1) switch (_context.n) {
+        case 0:
+          _t = fetch;
+          _t2 = url;
+          _t3 = URLSearchParams;
+          _t4 = merge;
+          _t5 = opts;
+          _t6 = {};
+          _context.n = 1;
+          return getToken();
+        case 1:
+          _t7 = _context.v;
+          _t8 = cb;
+          _t9 = _t4(_t5, _t6, {
+            csrfToken: _t7,
+            callbackUrl: _t8,
+            json: true
+          });
+          _t0 = new _t3(_t9);
+          _context.n = 2;
+          return _t(_t2, {
+            method: "post",
+            body: _t0
+          });
+        case 2:
+          res = _context.v;
+          return _context.a(2, res.json());
+      }
+    }, _callee);
+  }));
+  return _signIn.apply(this, arguments);
+}
+export function simple(_x4, _x5) {
+  return _simple.apply(this, arguments);
+}
+function _simple() {
+  _simple = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee2(a, b) {
+    var _t1, _t10;
+    return _regenerator().w(function (_context2) {
+      while (1) switch (_context2.n) {
+        case 0:
+          _t1 = f;
+          _t10 = a;
+          _context2.n = 1;
+          return b;
+        case 1:
+          return _context2.a(2, _t1(_t10, _context2.v));
+      }
+    }, _callee2);
+  }));
+  return _simple.apply(this, arguments);
+}
+export function pair(_x6, _x7) {
+  return _pair.apply(this, arguments);
+}
+function _pair() {
+  _pair = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee3(x, y) {
+    var list, record, _t11, _t12, _t13, _t14;
+    return _regenerator().w(function (_context3) {
+      while (1) switch (_context3.n) {
+        case 0:
+          _t11 = x;
+          _context3.n = 1;
+          return y;
+        case 1:
+          _t12 = _context3.v;
+          list = [_t11, _t12];
+          _t13 = x;
+          _context3.n = 2;
+          return y;
+        case 2:
+          _t14 = _context3.v;
+          record = {
+            a: _t13,
+            b: _t14
+          };
+          return _context3.a(2, [list, record]);
+      }
+    }, _callee3);
+  }));
+  return _pair.apply(this, arguments);
+}
+export function nested(_x8, _x9, _x0) {
+  return _nested.apply(this, arguments);
+}
+function _nested() {
+  _nested = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee4(a, b, c) {
+    var _t15, _t16, _t17, _t18;
+    return _regenerator().w(function (_context4) {
+      while (1) switch (_context4.n) {
+        case 0:
+          _t15 = g;
+          _t16 = a;
+          _t17 = h;
+          _t18 = b;
+          _context4.n = 1;
+          return c;
+        case 1:
+          return _context4.a(2, _t15(_t16, _t17(_t18, _context4.v)));
+      }
+    }, _callee4);
+  }));
+  return _nested.apply(this, arguments);
+}
+export function make(_x1, _x10) {
+  return _make.apply(this, arguments);
+}
+function _make() {
+  _make = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee5(a, b) {
+    var _t19, _t20, _t21;
+    return _regenerator().w(function (_context5) {
+      while (1) switch (_context5.n) {
+        case 0:
+          _t19 = Widget;
+          _t20 = a;
+          _context5.n = 1;
+          return b;
+        case 1:
+          _t21 = _context5.v;
+          return _context5.a(2, new _t19(_t20, _t21));
+      }
+    }, _callee5);
+  }));
+  return _make.apply(this, arguments);
+}
+export function send(_x11, _x12, _x13) {
+  return _send.apply(this, arguments);
+}
+function _send() {
+  _send = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee6(client, a, b) {
+    var _t22, _t23;
+    return _regenerator().w(function (_context6) {
+      while (1) switch (_context6.n) {
+        case 0:
+          _t22 = client;
+          _t23 = a;
+          _context6.n = 1;
+          return b;
+        case 1:
+          return _context6.a(2, _t22.post.call(_t22, _t23, _context6.v));
+      }
+    }, _callee6);
+  }));
+  return _send.apply(this, arguments);
+}
+"#;
+    assert_eq_normalized(&render(input), AWAIT_SPILL_EXPECTED);
+}
+
+/// A Babel 7.23 generator whose case 0 spills `f` and `a` (plus `extra`)
+/// before `yield b`, and whose case 4 consumes them with `consumer`.
+fn legacy_spill_generator(extra: &str, consumer: &str) -> String {
+    format!(
+        r#"
+var _marked = _regeneratorRuntime().mark(spill);
+function spill(a, b) {{
+  return _regeneratorRuntime().wrap(function spill$(_context) {{
+    while (1) switch (_context.prev = _context.next) {{
+      case 0:
+        _context.t0 = f;
+        _context.t1 = a;
+        {extra}
+        _context.next = 4;
+        return b;
+      case 4:
+        _context.t2 = _context.sent;
+        return _context.abrupt("return", {consumer});
+      case 6:
+      case "end":
+        return _context.stop();
+    }}
+  }}, _marked);
+}}
+"#
+    )
+}
+
+#[test]
+fn await_spill_fold_keeps_a_temp_read_twice() {
+    let input = legacy_spill_generator(
+        "",
+        "(0, _context.t0)(_context.t1, _context.t2, _context.t1)",
+    );
+    let expected = r#"
+function* spill(a, b) {
+  var t0, t1, t2;
+  t0 = f;
+  t1 = a;
+  t2 = yield b;
+  return (0, t0)(t1, t2, t1);
+}
+"#;
+    assert_eq_normalized(&apply(&input), expected);
+}
+
+#[test]
+fn await_spill_fold_keeps_temps_read_out_of_write_order() {
+    let input = legacy_spill_generator("", "(0, _context.t0)(_context.t2, _context.t1)");
+    let expected = r#"
+function* spill(a, b) {
+  var t0, t1, t2;
+  t0 = f;
+  t1 = a;
+  t2 = yield b;
+  return (0, t0)(t2, t1);
+}
+"#;
+    assert_eq_normalized(&apply(&input), expected);
+}
+
+#[test]
+fn await_spill_fold_keeps_temps_across_an_unrelated_statement() {
+    // `log()` runs between the spill and the yield; folding `f` and `a` past
+    // it would read them after `log()` instead of before.
+    let input = legacy_spill_generator("log();", "(0, _context.t0)(_context.t1, _context.t2)");
+    let expected = r#"
+function* spill(a, b) {
+  var t0, t1, t2;
+  t0 = f;
+  t1 = a;
+  log();
+  t2 = yield b;
+  return (0, t0)(t1, t2);
+}
+"#;
+    assert_eq_normalized(&apply(&input), expected);
+}
+
+#[test]
+fn await_spill_fold_keeps_a_temp_read_in_a_nested_function() {
+    let input = legacy_spill_generator(
+        "",
+        "(0, _context.t0)(function () { return _context.t1; }, _context.t2)",
+    );
+    let expected = r#"
+function* spill(a, b) {
+  var t0, t1, t2;
+  t0 = f;
+  t1 = a;
+  t2 = yield b;
+  return (0, t0)(function() {
+    return t1;
+  }, t2);
+}
+"#;
+    assert_eq_normalized(&apply(&input), expected);
+}
+
+#[test]
+fn await_spill_fold_keeps_temps_written_outside_a_try() {
+    // The spill is written before the try entry and read inside it.
+    let input = r#"
+var _marked = _regeneratorRuntime().mark(spill);
+function spill(a, b) {
+  return _regeneratorRuntime().wrap(function spill$(_context) {
+    while (1) switch (_context.prev = _context.next) {
+      case 0:
+        _context.t0 = f;
+        _context.t1 = a;
+        _context.prev = 2;
+        _context.next = 5;
+        return b;
+      case 5:
+        _context.t2 = _context.sent;
+        return _context.abrupt("return", (0, _context.t0)(_context.t1, _context.t2));
+      case 9:
+        _context.prev = 9;
+        _context.t3 = _context["catch"](2);
+        return _context.abrupt("return", g(_context.t3));
+      case 12:
+      case "end":
+        return _context.stop();
+    }
+  }, _marked, null, [[2, 9]]);
+}
+"#;
+    let expected = r#"
+function* spill(a, b) {
+  var t0, t1, t2;
+  t0 = f;
+  t1 = a;
+  try {
+    t2 = yield b;
+    return (0, t0)(t1, t2);
+  } catch (error) {
+    return g(error);
+  }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+/// A Babel 7.29 generator that stores `a` in the local `name` before
+/// `yield b` and consumes it with `consumer`.
+fn compact_spill_generator(name: &str, consumer: &str) -> String {
+    format!(
+        r#"
+var _marked = _regenerator().m(spill);
+function spill(a, b) {{
+  var {name};
+  return _regenerator().w(function (_context) {{
+    while (1) switch (_context.n) {{
+      case 0:
+        {name} = a;
+        _context.n = 1;
+        return b;
+      case 1:
+        return _context.a(2, {consumer});
+    }}
+  }}, _marked);
+}}
+"#
+    )
+}
+
+#[test]
+fn await_spill_fold_compact_temp() {
+    let input = compact_spill_generator("_t", "[_t, _context.v]");
+    let expected = r#"
+function* spill(a, b) {
+  return [a, (yield b)];
+}
+"#;
+    assert_eq_normalized(&apply(&input), expected);
+}
+
+#[test]
+fn await_spill_fold_keeps_a_compact_temp_read_twice() {
+    let input = compact_spill_generator("_t", "[_t, _context.v, _t]");
+    let expected = r#"
+function* spill(a, b) {
+  var _t;
+  _t = a;
+  return [_t, (yield b), _t];
+}
+"#;
+    assert_eq_normalized(&apply(&input), expected);
+}
+
+#[test]
+fn await_spill_fold_keeps_a_local_not_named_like_a_babel_temp() {
+    // A source `const head = a; return [head, await b]` compiles to the same
+    // shape; only Babel's own temps are folded.
+    let input = compact_spill_generator("head", "[head, _context.v]");
+    let expected = r#"
+function* spill(a, b) {
+  var head;
+  head = a;
+  return [head, (yield b)];
+}
+"#;
+    assert_eq_normalized(&apply(&input), expected);
+}
+
+#[test]
+fn await_spill_fold_wraps_a_member_value_in_callee_position() {
+    // `_t = o.m; _t(...)` calls without a receiver; the folded callee keeps
+    // that with `(0, o.m)`.
+    let input = r#"
+var _marked = _regenerator().m(spill);
+function spill(o, b) {
+  var _t;
+  return _regenerator().w(function (_context) {
+    while (1) switch (_context.n) {
+      case 0:
+        _t = o.m;
+        _context.n = 1;
+        return b;
+      case 1:
+        return _context.a(2, _t(_context.v));
+    }
+  }, _marked);
+}
+"#;
+    let expected = r#"
+function* spill(o, b) {
+  return (0, o.m)((yield b));
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn await_spill_fold_inside_a_try_block() {
+    // The spill and its consumer both sit inside the try region.
+    // producer babel@7.23 preset-env (ie 11)
+    let input = r#"
+var _marked = _regeneratorRuntime().mark(spill);
+function spill(a, b) {
+  return _regeneratorRuntime().wrap(function spill$(_context) {
+    while (1) switch (_context.prev = _context.next) {
+      case 0:
+        _context.prev = 0;
+        _context.t0 = f;
+        _context.t1 = a;
+        _context.next = 5;
+        return b;
+      case 5:
+        _context.t2 = _context.sent;
+        return _context.abrupt("return", (0, _context.t0)(_context.t1, _context.t2));
+      case 9:
+        _context.prev = 9;
+        _context.t3 = _context["catch"](0);
+        return _context.abrupt("return", g(_context.t3));
+      case 12:
+      case "end":
+        return _context.stop();
+    }
+  }, _marked, null, [[0, 9]]);
+}
+"#;
+    let expected = r#"
+function* spill(a, b) {
+  try {
+    return (0, f)(a, (yield b));
+  } catch (error) {
+    return g(error);
+  }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }

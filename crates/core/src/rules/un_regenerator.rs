@@ -14,6 +14,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::facts::{HelperKind, ModuleFactsMap};
 
+use super::await_spill_temps::fold_await_spill_temps;
 use super::decl_utils::{
     collect_decl_binding_ids, collect_pat_names, collect_var_decl_binding_ids, fresh_binding_ident,
     BindingId,
@@ -1111,7 +1112,13 @@ fn try_transform_regenerator_wrap_with_reserved(
     let mut body_names = IdentifierNameCollector::default();
     new_stmts.visit_with(&mut body_names);
     used_names.extend(body_names.names);
-    if !lower_state_temp_slots(&state_param, &mut new_stmts, &mut used_names) {
+    let mut slot_locals = HashSet::default();
+    if !lower_state_temp_slots(
+        &state_param,
+        &mut new_stmts,
+        &mut used_names,
+        &mut slot_locals,
+    ) {
         return None;
     }
     // Safety net: if a forward conditional jump could not be structured, an
@@ -1122,16 +1129,19 @@ fn try_transform_regenerator_wrap_with_reserved(
     }
     body.stmts.remove(return_idx);
     body.stmts.splice(return_idx..return_idx, new_stmts);
+    fold_await_spill_temps(&mut body.stmts, &slot_locals);
     Some(mark_name)
 }
 
 /// Turn every `state.tN` slot in the decoded statements into a fresh local
-/// declared with `var` at the front of `stmts`. Returns `false` when a
-/// reference to the state parameter other than a slot survives.
+/// declared with `var` at the front of `stmts`, and record each new local in
+/// `slot_locals`. Returns `false` when a reference to the state parameter
+/// other than a slot survives.
 fn lower_state_temp_slots(
     state_param: &Ident,
     stmts: &mut Vec<Stmt>,
     used_names: &mut HashSet<Atom>,
+    slot_locals: &mut HashSet<BindingKey>,
 ) -> bool {
     struct SlotCollector<'a> {
         state_param: &'a Ident,
@@ -1193,6 +1203,7 @@ fn lower_state_temp_slots(
             (slot.clone(), fresh_binding_ident(candidate, DUMMY_SP))
         })
         .collect();
+    slot_locals.extend(locals.values().map(|local| (local.sym.clone(), local.ctxt)));
 
     struct SlotRewriter<'a> {
         state_param: &'a Ident,
