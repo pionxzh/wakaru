@@ -783,9 +783,17 @@ impl Visit for SpreadValuesMarker<'_> {
     }
 }
 
+/// `b`, `b || (b = {})`, or `b ||= {}`: esbuild's `__spreadValues` iterates
+/// its source with an empty-object default, written with `||=` when the
+/// target supports logical assignment.
 fn expr_is_source_or_default(expr: &Expr, source: &Ident) -> bool {
     if is_binding_ref(expr, source) {
         return true;
+    }
+    if let Expr::Assign(assign) = strip_parens(expr) {
+        return assign.op == AssignOp::OrAssign
+            && assign_target_matches_ident(&assign.left, source)
+            && matches!(strip_parens(&assign.right), Expr::Object(obj) if obj.props.is_empty());
     }
     let Expr::Bin(bin) = strip_parens(expr) else {
         return false;
