@@ -893,6 +893,206 @@ function* read_all(source) {
     assert_eq_normalized(&output, expected);
 }
 
+// ── Terser-wrapped callbacks ────────────────────────────────────────────────
+//
+// Terser before 5.43 wraps every function passed as a call argument in
+// parentheses (its default `wrap_func_args` output option). The state machine
+// callback then reads `_regenerator().w((function (_context) { … }), _marked)`.
+
+#[test]
+fn compact_generator_with_parenthesized_callback_is_restored() {
+    // producer babel@7.29 preset-env (ie 11) + terser@5.31 --module
+    let input = r#"
+var _marked = _regenerator().m(count);
+function count(limit) {
+  var i;
+  return _regenerator().w((function (_context) {
+    while (1) switch (_context.n) {
+      case 0:
+        i = 0;
+      case 1:
+        if (!(i < limit)) { _context.n = 3; break; }
+        _context.n = 2;
+        return i;
+      case 2:
+        i++;
+        _context.n = 1;
+        break;
+      case 3:
+        return _context.a(2, "done");
+    }
+  }), _marked);
+}
+export { count };
+"#;
+    let expected = r#"
+function* count(limit) {
+  let i = 0;
+  for (; i < limit; i++) {
+    yield i;
+  }
+  return "done";
+}
+export { count };
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn compact_async_function_with_parenthesized_callbacks_is_restored() {
+    // producer babel@7.29 preset-env (ie 11) + terser@5.31 --module
+    let input = r#"
+function asyncGeneratorStep(n, t, e, r, o, a, c) {
+  try { var i = n[a](c), u = i.value; } catch (n) { return void e(n); }
+  i.done ? t(u) : Promise.resolve(u).then(r, o);
+}
+function _asyncToGenerator(n) {
+  return function () {
+    var t = this, e = arguments;
+    return new Promise((function (r, o) {
+      var a = n.apply(t, e);
+      function _next(n) { asyncGeneratorStep(a, r, o, _next, _throw, "next", n); }
+      function _throw(n) { asyncGeneratorStep(a, r, o, _next, _throw, "throw", n); }
+      _next(void 0);
+    }));
+  };
+}
+export function load(_x) {
+  return _load.apply(this, arguments);
+}
+function _load() {
+  _load = _asyncToGenerator(_regenerator().m((function _callee(url) {
+    var response;
+    return _regenerator().w((function (_context2) {
+      while (1) switch (_context2.n) {
+        case 0:
+          _context2.n = 1;
+          return fetch(url);
+        case 1:
+          response = _context2.v;
+          if (response.ok) { _context2.n = 2; break; }
+          throw new Error("bad");
+        case 2:
+          return _context2.a(2, response.json());
+      }
+    }), _callee);
+  })));
+  return _load.apply(this, arguments);
+}
+"#;
+    let expected = r#"
+export async function load(url) {
+  let response;
+  response = await fetch(url);
+  if (!response.ok) {
+    throw new Error("bad");
+  }
+  return response.json();
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn legacy_generator_with_parenthesized_callback_is_restored() {
+    // producer babel@7.23 preset-env (ie 11) + terser@5.31 --module
+    let input = r#"
+var _marked = _regeneratorRuntime().mark(count);
+function count(limit) {
+  var i;
+  return _regeneratorRuntime().wrap((function count$(_context) {
+    while (1) switch (_context.prev = _context.next) {
+      case 0:
+        i = 0;
+      case 1:
+        if (!(i < limit)) { _context.next = 7; break; }
+        _context.next = 4;
+        return i;
+      case 4:
+        i++;
+        _context.next = 1;
+        break;
+      case 7:
+        return _context.abrupt("return", "done");
+      case 8:
+      case "end":
+        return _context.stop();
+    }
+  }), _marked);
+}
+export { count };
+"#;
+    let expected = r#"
+function* count(limit) {
+  let i = 0;
+  for (; i < limit; i++) {
+    yield i;
+  }
+  return "done";
+}
+export { count };
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn legacy_async_function_with_parenthesized_callbacks_is_restored() {
+    // producer babel@7.23 preset-env (ie 11) + terser@5.31 --module
+    let input = r#"
+function asyncGeneratorStep(gen, resolve, reject, _next, _throw, key, arg) {
+  try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; }
+  if (info.done) { resolve(value); } else { Promise.resolve(value).then(_next, _throw); }
+}
+function _asyncToGenerator(fn) {
+  return function () {
+    var self = this, args = arguments;
+    return new Promise((function (resolve, reject) {
+      var gen = fn.apply(self, args);
+      function _next(value) { asyncGeneratorStep(gen, resolve, reject, _next, _throw, "next", value); }
+      function _throw(err) { asyncGeneratorStep(gen, resolve, reject, _next, _throw, "throw", err); }
+      _next(void 0);
+    }));
+  };
+}
+export function load(_x) {
+  return _load.apply(this, arguments);
+}
+function _load() {
+  _load = _asyncToGenerator(_regeneratorRuntime().mark((function _callee(url) {
+    var response;
+    return _regeneratorRuntime().wrap((function _callee$(_context2) {
+      while (1) switch (_context2.prev = _context2.next) {
+        case 0:
+          _context2.next = 2;
+          return fetch(url);
+        case 2:
+          response = _context2.sent;
+          if (response.ok) { _context2.next = 5; break; }
+          throw new Error("bad");
+        case 5:
+          return _context2.abrupt("return", response.json());
+        case 6:
+        case "end":
+          return _context2.stop();
+      }
+    }), _callee);
+  })));
+  return _load.apply(this, arguments);
+}
+"#;
+    let expected = r#"
+export async function load(url) {
+  let response;
+  response = await fetch(url);
+  if (!response.ok) {
+    throw new Error("bad");
+  }
+  return response.json();
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
 // ── _asyncToGenerator (Babel async functions) ───────────────────────────────
 
 #[test]

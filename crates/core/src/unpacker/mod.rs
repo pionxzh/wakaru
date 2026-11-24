@@ -1735,7 +1735,10 @@ fn parse_es_module_with_recovery(
         .collect();
 
     match (parsed, parser_errors.is_empty()) {
-        (Ok(module), _) => Ok((module, parser_errors)),
+        (Ok(mut module), _) => {
+            crate::utils::paren::unwrap_parenthesized_function_args(&mut module);
+            Ok((module, parser_errors))
+        }
         (Err(error), true) => Err(anyhow::anyhow!("failed to parse {filename}: {error:?}")),
         (Err(error), false) => Err(anyhow::anyhow!(
             "failed to parse {filename}: {error:?}; {}",

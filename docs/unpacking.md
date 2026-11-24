@@ -82,7 +82,8 @@ attempted in order — first match wins:
    bundles from Bun are detected and split by this unpacker. rolldown's
    `__commonJSMin` has the same shape too, but rolldown passes each factory
    in an extra pair of parentheses (`__commonJSMin(((exports, module) =>
-   { … }))`); those parentheses are removed before detection. Its minifier
+   { … }))`); the parser removes those parentheses before detection (see
+   the parsing note under Driver in [architecture.md](architecture.md)). Its minifier
    also inlines a factory used once into the call that runs it
    (`c = l(o((e, t) => { … })())`); such a factory gets its own declarator
    first (`require_c = o(…), c = l(require_c())`). Building the closure

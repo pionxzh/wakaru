@@ -92,6 +92,40 @@ fn parenthesized_string_statement_keeps_its_parens() {
     }
 }
 
+/// The parser drops the parentheses around a function passed as a call
+/// argument. Parentheses that carry meaning stay: a member on a parenthesized
+/// optional chain, a parenthesized string statement, a sequence argument.
+#[test]
+fn parens_with_meaning_survive_function_argument_unwrapping() {
+    let input = r#"("use strict");
+function f() {
+    ("use strict");
+    return this === undefined;
+}
+const c = (a?.b).c;
+const d = (a?.b)();
+g((x, y), (h), ((function () { return 1; })), ...(rest));
+new F(((() => 2)));
+o?.m((async function* () {}));
+"#;
+    let expected = r#"("use strict");
+function f() {
+    ("use strict");
+    return this === undefined;
+}
+const c = (a?.b).c;
+const d = (a?.b)();
+g((x, y), h, function() {
+    return 1;
+}, ...rest);
+new F(()=>2);
+o?.m(async function*() {});
+"#;
+
+    assert_eq!(render_with_level(input, RewriteLevel::Minimal), expected);
+    assert_eq!(render(input), expected);
+}
+
 /// A string that was an operand of a sequence is not a directive either.
 /// Splitting the sequence must not turn it into one.
 #[test]

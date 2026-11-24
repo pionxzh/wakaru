@@ -111,6 +111,16 @@ text when their contracts require it. A prepared AST carries the detector's own
 `SyntaxContext` conventions for the bindings it synthesized, so the driver
 clears and re-resolves it at the Phase 1 boundary before any rule runs.
 
+Every input parse (`parse_js*` in `driver/io.rs` and the unpacker's
+`parse_es_module`) removes the parentheses around a function or arrow passed
+as a call or `new` argument (`f((function () {}))` becomes
+`f(function () {})`), so detectors and rules see the bare function. SWC keeps
+source parentheses as `Expr::Paren`, and Terser before 5.43 wraps every
+function argument this way by default. No other parentheses are removed: some
+carry meaning (`(a?.b).c`, `("use strict");`), and a matcher that reads
+another position, such as an IIFE callee, strips them itself. See
+`unwrap_parenthesized_function_args` in `crates/core/src/utils/paren.rs`.
+
 Single-file decompile:
 
 ```

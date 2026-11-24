@@ -3544,3 +3544,54 @@ async function f(a) {
 "#;
     assert_eq_normalized(&render(input), expected);
 }
+
+#[test]
+fn awaiter_and_generator_with_parenthesized_callbacks_are_restored() {
+    // Terser before 5.43 wraps every function passed as a call argument in
+    // parentheses (its default `wrap_func_args` output option), in the
+    // helpers and in the calls that use them.
+    // producer typescript@3.9.10 --target es5 + terser@5.31 --module
+    let input = r#"
+var __awaiter = this && this.__awaiter || function (thisArg, _arguments, P, generator) {
+  function adopt(value) { return value instanceof P ? value : new P((function (resolve) { resolve(value); })); }
+  return new (P || (P = Promise))((function (resolve, reject) {
+    function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+    function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+    function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+    step((generator = generator.apply(thisArg, _arguments || [])).next());
+  }));
+};
+var __generator = this && this.__generator || function (thisArg, body) {
+  var _ = { label: 0, sent: function () { if (t[0] & 1) throw t[1]; return t[1]; }, trys: [], ops: [] }, f, y, t, g;
+  return g = { next: verb(0), "throw": verb(1), "return": verb(2) }, typeof Symbol === "function" && (g[Symbol.iterator] = function () { return this; }), g;
+  function verb(n) { return function (v) { return step([n, v]); }; }
+  function step(op) { return body.call(thisArg, _); }
+};
+export function load(url) {
+  return __awaiter(this, void 0, void 0, (function () {
+    var response;
+    return __generator(this, (function (_a) {
+      switch (_a.label) {
+        case 0:
+          return [4, fetch(url)];
+        case 1:
+          response = _a.sent();
+          if (!response.ok) throw new Error("bad");
+          return [2, response.json()];
+      }
+    }));
+  }));
+}
+"#;
+    let expected = r#"
+export async function load(url) {
+  let response;
+  response = await fetch(url);
+  if (!response.ok) {
+    throw new Error("bad");
+  }
+  return response.json();
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}

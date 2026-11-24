@@ -121,7 +121,7 @@ crates/
         chunk_enumeration.rs        — fail-closed lazy-chunk URL / relative-import enumeration (`debug enumerate-chunks`)
         chunk_loading_global.rs     — an input's chunk-loading global names (its build identity for multi-input module-id rewrites)
       utils/
-        paren.rs, swc_safety.rs     — paren stripping, SWC panic guards
+        paren.rs, swc_safety.rs     — paren stripping and the parse-time unwrap of function arguments, SWC panic guards
     tests/
       common/mod.rs                 — test helpers (see docs/testing.md)
       *_rule.rs                     — per-rule unit tests

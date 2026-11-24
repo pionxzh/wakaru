@@ -36,8 +36,8 @@ use factories::{
     collect_commonjs_helper_syms, collect_factories, collect_factories_owned,
     collect_factory_analysis_bindings, collect_factory_body_bindings, collect_helper_syms,
     filter_helper_factory_declarators, has_factory_detection_evidence,
-    has_parenthesized_factory_args, item_has_helper_factory_declarator, locally_exported_atoms,
-    unwrap_parenthesized_factory_args, Factory, FactoryBodyRef, PathCommentHints,
+    item_has_helper_factory_declarator, locally_exported_atoms, Factory, FactoryBodyRef,
+    PathCommentHints,
 };
 use inline_factories::{has_inlined_factory_calls, name_inlined_factories};
 use lazy_import::{plan_lazy_imports, LazyImportPlan};
@@ -73,13 +73,12 @@ pub(super) fn detect_from_module_with_source(
         return None;
     }
 
-    // Cloned only for a bundle that passes factories in parentheses or
-    // inlines a factory into its call (rolldown).
-    let normalized_module = (has_parenthesized_factory_args(module, &helper_syms)
-        || has_inlined_factory_calls(module, &helper_syms))
-    .then(|| {
+    // Cloned only for a bundle that inlines a factory into its call
+    // (rolldown). A factory passed in parentheses (`__commonJSMin(((exports,
+    // module) => { … }))`, also rolldown) needs nothing here: the parser
+    // already removed them (see `unwrap_parenthesized_function_args`).
+    let normalized_module = has_inlined_factory_calls(module, &helper_syms).then(|| {
         let mut normalized = module.clone();
-        unwrap_parenthesized_factory_args(&mut normalized, &helper_syms);
         name_inlined_factories(&mut normalized, &helper_syms);
         normalized
     });
@@ -164,7 +163,6 @@ pub(super) fn detect_from_owned_factory_module_with_source(
     if has_inlined_factory_calls(&module, &helper_syms) {
         return Err(module);
     }
-    unwrap_parenthesized_factory_args(&mut module, &helper_syms);
     if helper_syms.is_empty() || !has_factory_detection_evidence(&module, &helper_syms) {
         return Err(module);
     }

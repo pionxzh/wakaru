@@ -8,6 +8,7 @@ use swc_core::ecma::ast::{Module, ModuleItem};
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax, TsSyntax};
 
+use crate::utils::paren::unwrap_parenthesized_function_args;
 pub(crate) use crate::utils::swc_safety::apply_fixer;
 
 use super::line_index::LineIndex;
@@ -77,10 +78,13 @@ pub(super) fn parse_js_with_recovery_owned(
         .collect();
 
     match (parsed, parser_errors.is_empty()) {
-        (Ok(module), _) => Ok(ParsedModule {
-            module,
-            recoverable_errors: parser_errors,
-        }),
+        (Ok(mut module), _) => {
+            unwrap_parenthesized_function_args(&mut module);
+            Ok(ParsedModule {
+                module,
+                recoverable_errors: parser_errors,
+            })
+        }
         (Err(error), true) => Err(anyhow!("failed to parse {filename}: {error:?}")),
         (Err(error), false) => Err(anyhow!(
             "failed to parse {filename}: {error:?}; {}",
@@ -93,6 +97,9 @@ pub(super) fn parse_js_with_recovery_owned(
     }
 }
 
+/// Parse as a script. Output diagnostics use this to re-read emitted text
+/// that is not a module; it is never an input parse, so it skips
+/// [`unwrap_parenthesized_function_args`].
 pub(super) fn parse_script_with_recovery(
     source: &str,
     filename: &str,
