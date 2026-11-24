@@ -2069,6 +2069,14 @@ fn decode_babel_state_machine(
                                 }),
                             ));
                         }
+                        // A value-less `_ctx.a(2)` that ends the last case
+                        // is the machine's end, the same as `stop()`.
+                        DecodedReturn::ReturnVoid
+                            if next_case_label.is_none()
+                                && i + 1 == stmts.len()
+                                && ret.arg.as_deref().is_some_and(|arg| {
+                                    is_value_less_short_return(state_param, arg)
+                                }) => {}
                         DecodedReturn::ReturnVoid => {
                             flat.push((
                                 label,
@@ -2985,6 +2993,20 @@ fn decode_abrupt(state_param: &Ident, expr: &Expr) -> Option<DecodedReturn> {
     }
 }
 
+/// `_ctx.a(2)` with no value: Babel 7.27+'s bare `return;`.
+fn is_value_less_short_return(state_param: &Ident, expr: &Expr) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    let Some(Expr::Member(member)) = call.callee.as_expr().map(|callee| callee.as_ref()) else {
+        return false;
+    };
+    is_state_param_ref(&member.obj, state_param)
+        && member_prop_name(&member.prop, "a")
+        && call.args.len() == 1
+        && matches!(call.args[0].expr.as_ref(), Expr::Lit(Lit::Num(kind)) if kind.value == 2.0)
+}
+
 fn decode_short_abrupt(state_param: &Ident, expr: &Expr) -> Option<DecodedReturn> {
     let Expr::Call(call) = expr else {
         return None;
@@ -3004,11 +3026,15 @@ fn decode_short_abrupt(state_param: &Ident, expr: &Expr) -> Option<DecodedReturn
             .args
             .get(1)
             .map(|arg| DecodedReturn::Throw(arg.expr.clone())),
-        2 => call
-            .args
-            .get(1)
-            .map(|arg| DecodedReturn::Return(arg.expr.clone()))
-            .or(Some(DecodedReturn::Stop)),
+        // A value-less `a(2)` is a bare `return;`, wherever it sits, like
+        // `abrupt("return")`. It is not `stop()`: a mid-machine one has
+        // cases after it that it skips.
+        2 => Some(
+            call.args
+                .get(1)
+                .map(|arg| DecodedReturn::Return(arg.expr.clone()))
+                .unwrap_or(DecodedReturn::ReturnVoid),
+        ),
         _ => None,
     }
 }

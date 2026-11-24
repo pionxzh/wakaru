@@ -4647,10 +4647,11 @@ function myGen(cond) {
 }
 
 #[test]
-fn babel_729_mid_machine_void_return_keeps_the_machine() {
+fn babel_729_mid_machine_void_return_recovers_the_early_return() {
     // `if (!a) { log("no-a"); return; } await tick("v1");` through 7.29: the
-    // value-less `_context.a(2)` decodes as the machine's final stop and is
-    // dropped, so folding the guard would fall through into the yield.
+    // value-less `_context.a(2)` before later cases is a bare `return;`, not
+    // the machine's final stop; dropping it would fall through into the yield.
+    // The one ending the last case is the end of the machine and stays dropped.
     let input = r#"
 var _marked = _regenerator().m(run);
 function run(a) {
@@ -4672,11 +4673,17 @@ function run(a) {
   }, _marked);
 }
 "#;
+    let expected = r#"
+function* run(a) {
+  if (!a) {
+    log("no-a");
+    return;
+  }
+  yield tick("v1");
+}
+"#;
     let output = apply(input);
-    assert!(
-        output.contains("_regenerator().w"),
-        "a mid-machine stop must keep the machine, got:\n{output}"
-    );
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
