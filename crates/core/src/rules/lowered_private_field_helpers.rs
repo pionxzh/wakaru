@@ -1,21 +1,25 @@
-//! Private-field helpers of Babel, swc, and esbuild, recognized by body.
+//! Class-member helpers of Babel, swc, and esbuild, recognized by body.
 //!
 //! tsc's `__classPrivateFieldGet/Set` are found in `transpiler_helper_utils`.
 //! The other producers lower `#x` through helpers with different argument
 //! orders and storage, so each is matched here by what its body does with its
 //! parameters, never by its name:
 //!
-//! | Producer | init | get | set |
-//! |---|---|---|---|
-//! | Babel 7.24+ | `init(this, map, v)` | `get(map, this)` | `set(map, this, v)` |
-//! | swc, older Babel | `init(this, map, {writable: true, value: v})` or `map.set(this, …)` | `get(this, map)` | `set(this, map, v)` |
-//! | esbuild | `__privateAdd(this, map, v)` | `__privateGet(this, map)` | `__privateSet(this, map, v)` |
+//! | Producer | init | get | set | method |
+//! |---|---|---|---|---|
+//! | Babel 7.24+ | `init(this, map, v)` | `get(map, this)` | `set(map, this, v)` | `_assertClassBrand(brand, this, fn)` |
+//! | swc, older Babel | `init(this, map, {writable: true, value: v})` or `map.set(this, …)` | `get(this, map)` | `set(this, map, v)` | `get(this, brand, fn)` |
+//! | esbuild | `__privateAdd(this, map, v)` | `__privateGet(this, map)` | `__privateSet(this, map, v)` | `__privateMethod(this, brand, fn)` |
 //!
 //! swc and older Babel store a descriptor in the map and read its `value`
 //! ([`PrivateStorage::Descriptor`]); the others store the value itself.
 //! Sub-helpers (brand checks, redeclaration checks, descriptor accessors) are
 //! followed through a binding or an inline function, the form Terser
 //! leaves for a single-use helper.
+//!
+//! esbuild's public-field helper, `__publicField(this, key, value)` over
+//! `__defNormalProp`, is matched here too
+//! ([`collect_esbuild_public_field_helpers`]).
 
 use crate::collections::{HashMap, HashSet};
 
@@ -63,6 +67,15 @@ pub(crate) enum LoweredPrivateHelper {
         arity: usize,
         storage: PrivateStorage,
     },
+    /// `(receiver, brand, method)`, exactly three arguments: returns `method`
+    /// when the brand set holds the receiver and throws otherwise. esbuild's
+    /// `__privateMethod`, swc's and older Babel's `_classPrivateMethodGet`,
+    /// and Babel's `_assertClassBrand` called with a value.
+    MethodGet {
+        receiver: usize,
+        brand: usize,
+        method: usize,
+    },
 }
 
 /// The recognized helpers of a module, and every helper binding they reach.
@@ -74,17 +87,19 @@ pub(crate) struct LoweredPrivateHelpers {
     pub(crate) bindings: HashSet<BindingKey>,
 }
 
-/// Helper bindings that are never written, by role. Helpers are found in
-/// any statement list: a UMD wrapper or an unsplit module factory holds them
-/// in a function body.
-pub(crate) fn collect_lowered_private_helpers(
+/// Every function bound to a never-written binding, by a declaration or a
+/// declarator, in any statement list; and the never-written
+/// `x = Object.defineProperty` aliases.
+fn collect_function_views(
     module: &Module,
     unresolved_mark: Mark,
-) -> LoweredPrivateHelpers {
+) -> (HashMap<BindingKey, FnView>, HashSet<BindingKey>) {
     use swc_core::ecma::visit::{Visit, VisitWith};
     struct Collector<'a> {
         written: &'a HashSet<BindingKey>,
+        unresolved_mark: Mark,
         functions: HashMap<BindingKey, FnView>,
+        define_property_aliases: HashSet<BindingKey>,
     }
     impl Visit for Collector<'_> {
         fn visit_fn_decl(&mut self, fn_decl: &swc_core::ecma::ast::FnDecl) {
@@ -100,8 +115,12 @@ pub(crate) fn collect_lowered_private_helpers(
             if let Pat::Ident(binding) = &declarator.name {
                 let key = binding_key(&binding.id);
                 if !self.written.contains(&key) {
-                    if let Some(view) = declarator.init.as_deref().and_then(FnView::from_expr) {
-                        self.functions.insert(key, view);
+                    if let Some(init) = declarator.init.as_deref() {
+                        if let Some(view) = FnView::from_expr(init) {
+                            self.functions.insert(key, view);
+                        } else if is_object_define_property(init, self.unresolved_mark) {
+                            self.define_property_aliases.insert(key);
+                        }
                     }
                 }
             }
@@ -112,10 +131,23 @@ pub(crate) fn collect_lowered_private_helpers(
         crate::analysis::binding_uses::BindingUseIndex::collect_direct_write_bindings(module);
     let mut collector = Collector {
         written: &written,
+        unresolved_mark,
         functions: HashMap::default(),
+        define_property_aliases: HashSet::default(),
     };
     module.visit_with(&mut collector);
-    let functions = collector.functions;
+    (collector.functions, collector.define_property_aliases)
+}
+
+/// Helper bindings that are never written, by role. Helpers are found in
+/// any statement list: a UMD wrapper or an unsplit module factory holds them
+/// in a function body.
+pub(crate) fn collect_lowered_private_helpers(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> LoweredPrivateHelpers {
+    use swc_core::ecma::visit::{Visit, VisitWith};
+    let (functions, _) = collect_function_views(module, unresolved_mark);
     if functions.is_empty() {
         return LoweredPrivateHelpers::default();
     }
@@ -155,6 +187,239 @@ pub(crate) fn collect_lowered_private_helpers(
         }
     }
     LoweredPrivateHelpers { roles, bindings }
+}
+
+/// esbuild's `__publicField` helpers of a module.
+#[derive(Default)]
+pub(crate) struct PublicFieldHelpers {
+    /// `__publicField(obj, key, value)` bindings: called as a statement with a
+    /// string key, it defines a writable, enumerable, configurable data
+    /// property, as a class field does.
+    pub(crate) helpers: HashSet<BindingKey>,
+    /// The helpers, the `__defNormalProp` helpers they call, and the
+    /// `Object.defineProperty` aliases those call, for removal once no call
+    /// is left.
+    pub(crate) bindings: HashSet<BindingKey>,
+}
+
+/// `__publicField = (obj, key, value) => __defNormalProp(obj, typeof key !==
+/// "symbol" ? key + "" : key, value)` over `__defNormalProp = (obj, key,
+/// value) => key in obj ? __defProp(obj, key, { enumerable: true,
+/// configurable: true, writable: true, value }) : obj[key] = value`, matched
+/// by body in any statement list, never by name.
+pub(crate) fn collect_esbuild_public_field_helpers(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> PublicFieldHelpers {
+    let (functions, define_property_aliases) = collect_function_views(module, unresolved_mark);
+    let is_define_property = |callee: &Expr| match strip_parens(callee) {
+        Expr::Ident(id) => define_property_aliases.contains(&binding_key(id)),
+        other => is_object_define_property(other, unresolved_mark),
+    };
+    let mut result = PublicFieldHelpers::default();
+    for (key, view) in &functions {
+        let Some(define) = public_field_define_callee(view) else {
+            continue;
+        };
+        let Some(define_view) = functions.get(&define) else {
+            continue;
+        };
+        let Some(define_property) = define_normal_prop_callee(define_view, &is_define_property)
+        else {
+            continue;
+        };
+        result.helpers.insert(key.clone());
+        result.bindings.insert(key.clone());
+        result.bindings.insert(define);
+        if let Expr::Ident(alias) = strip_parens(define_property) {
+            result.bindings.insert(binding_key(alias));
+        }
+    }
+    result
+}
+
+/// `(obj, key, value) => define(obj, toKey(key), value)`: `define`.
+fn public_field_define_callee(f: &FnView) -> Option<BindingKey> {
+    if f.params.len() != 3 {
+        return None;
+    }
+    let [Stmt::Return(ReturnStmt { arg: Some(ret), .. })] = f.body.as_slice() else {
+        return None;
+    };
+    let Expr::Call(call) = strip_parens(ret) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(define) = strip_parens(callee) else {
+        return None;
+    };
+    let (o, k, v) = (f.param(0), f.param(1), f.param(2));
+    let args = plain_args(call)?;
+    let [obj, key, value] = args.as_slice() else {
+        return None;
+    };
+    (is_param(obj, o) && is_param(value, v) && is_symbol_or_string_key(key, k))
+        .then(|| binding_key(define))
+}
+
+/// `typeof key !== "symbol" ? key + "" : key`, with the string conversion
+/// also as `` `${key}` `` and the test in either order or negated.
+fn is_symbol_or_string_key(expr: &Expr, k: &BindingKey) -> bool {
+    let Expr::Cond(cond) = strip_parens(expr) else {
+        return false;
+    };
+    let Expr::Bin(test) = strip_parens(&cond.test) else {
+        return false;
+    };
+    let is_typeof_key = |expr: &Expr| {
+        matches!(strip_parens(expr), Expr::Unary(unary)
+            if unary.op == UnaryOp::TypeOf && is_param(&unary.arg, k))
+    };
+    let is_symbol_str = |expr: &Expr| matches!(strip_parens(expr), Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some("symbol"));
+    if !((is_typeof_key(&test.left) && is_symbol_str(&test.right))
+        || (is_symbol_str(&test.left) && is_typeof_key(&test.right)))
+    {
+        return false;
+    }
+    let is_string_conversion = |expr: &Expr| match strip_parens(expr) {
+        Expr::Bin(bin) => {
+            bin.op == BinaryOp::Add
+                && is_param(&bin.left, k)
+                && matches!(strip_parens(&bin.right), Expr::Lit(Lit::Str(s)) if s.value.is_empty())
+        }
+        Expr::Tpl(tpl) => {
+            matches!(tpl.exprs.as_slice(), [only] if is_param(only, k))
+                && tpl.quasis.iter().all(|quasi| {
+                    quasi
+                        .cooked
+                        .as_ref()
+                        .is_some_and(|cooked| cooked.is_empty())
+                })
+        }
+        _ => false,
+    };
+    match test.op {
+        BinaryOp::NotEqEq | BinaryOp::NotEq => {
+            is_string_conversion(&cond.cons) && is_param(&cond.alt, k)
+        }
+        BinaryOp::EqEqEq | BinaryOp::EqEq => {
+            is_param(&cond.cons, k) && is_string_conversion(&cond.alt)
+        }
+        _ => false,
+    }
+}
+
+/// `(obj, key, value) => key in obj ? defineProperty(obj, key, { enumerable:
+/// true, configurable: true, writable: true, value }) : obj[key] = value`, or
+/// the same as `if (key in obj) return …; return obj[key] = value`: the
+/// `defineProperty` callee.
+fn define_normal_prop_callee<'a>(
+    f: &'a FnView,
+    is_define_property: &dyn Fn(&Expr) -> bool,
+) -> Option<&'a Expr> {
+    if f.params.len() != 3 {
+        return None;
+    }
+    let (o, k, v) = (f.param(0), f.param(1), f.param(2));
+    let (test, define, assign) = match f.body.as_slice() {
+        [Stmt::Return(ReturnStmt { arg: Some(ret), .. })] => {
+            let Expr::Cond(cond) = strip_parens(ret) else {
+                return None;
+            };
+            (&*cond.test, &*cond.cons, &*cond.alt)
+        }
+        [Stmt::If(check), Stmt::Return(ReturnStmt {
+            arg: Some(assign), ..
+        })] if check.alt.is_none() => (&*check.test, single_return(&check.cons)?, &**assign),
+        _ => return None,
+    };
+    let is_in_test = matches!(strip_parens(test), Expr::Bin(bin)
+        if bin.op == BinaryOp::In && is_param(&bin.left, k) && is_param(&bin.right, o));
+    let is_fallback_assign = matches!(strip_parens(assign), Expr::Assign(assign)
+        if assign.op == swc_core::ecma::ast::AssignOp::Assign
+            && matches!(&assign.left, swc_core::ecma::ast::AssignTarget::Simple(
+                swc_core::ecma::ast::SimpleAssignTarget::Member(member))
+                if is_param(&member.obj, o)
+                    && matches!(&member.prop, MemberProp::Computed(prop) if is_param(&prop.expr, k)))
+            && is_param(&assign.right, v));
+    if !is_in_test || !is_fallback_assign {
+        return None;
+    }
+    let Expr::Call(call) = strip_parens(define) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let args = plain_args(call)?;
+    let [obj, key, descriptor] = args.as_slice() else {
+        return None;
+    };
+    (is_define_property(callee)
+        && is_param(obj, o)
+        && is_param(key, k)
+        && is_data_descriptor_of(descriptor, v))
+    .then_some(&**callee)
+}
+
+/// `{ enumerable: true, configurable: true, writable: true, value }`, in any
+/// order, `true` also as `!0`.
+fn is_data_descriptor_of(expr: &Expr, v: &BindingKey) -> bool {
+    use swc_core::ecma::ast::{Prop, PropName, PropOrSpread};
+    let Expr::Object(object) = strip_parens(expr) else {
+        return false;
+    };
+    let is_true = |expr: &Expr| match strip_parens(expr) {
+        Expr::Lit(Lit::Bool(b)) => b.value,
+        Expr::Unary(unary) => {
+            unary.op == UnaryOp::Bang
+                && matches!(strip_parens(&unary.arg), Expr::Lit(Lit::Num(n)) if n.value == 0.0)
+        }
+        _ => false,
+    };
+    let mut seen = [false; 4];
+    for prop in &object.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            return false;
+        };
+        let (name, value_is) = match prop.as_ref() {
+            Prop::Shorthand(id) => (id.sym.as_ref(), binding_key(id) == *v),
+            Prop::KeyValue(kv) => {
+                let PropName::Ident(name) = &kv.key else {
+                    return false;
+                };
+                let name = name.sym.as_ref();
+                let ok = if name == "value" {
+                    is_param(&kv.value, v)
+                } else {
+                    is_true(&kv.value)
+                };
+                (name, ok)
+            }
+            _ => return false,
+        };
+        let slot = match name {
+            "enumerable" => 0,
+            "configurable" => 1,
+            "writable" => 2,
+            "value" => 3,
+            _ => return false,
+        };
+        if !value_is || std::mem::replace(&mut seen[slot], true) {
+            return false;
+        }
+    }
+    seen.iter().all(|seen| *seen)
+}
+
+/// `Object.defineProperty`, `Object` the global.
+fn is_object_define_property(expr: &Expr, unresolved_mark: Mark) -> bool {
+    matches!(strip_parens(expr), Expr::Member(member)
+        if member_prop_is(member, "defineProperty")
+            && matches!(member.obj.as_ref(), Expr::Ident(obj)
+                if obj.sym.as_ref() == "Object" && obj.ctxt.outer() == unresolved_mark))
 }
 
 /// A helper function's simple parameters and its body, with comma
@@ -315,7 +580,9 @@ impl Matcher<'_> {
                 .or_else(|| self.descriptor_set(f))
                 .or_else(|| self.esbuild_add(f))
                 .or_else(|| self.esbuild_get(f))
-                .or_else(|| self.esbuild_set(f)),
+                .or_else(|| self.esbuild_set(f))
+                .or_else(|| self.method_get(f))
+                .or_else(|| self.babel_brand_method(f)),
             4 => self.esbuild_set(f),
             _ => None,
         }
@@ -409,6 +676,57 @@ impl Matcher<'_> {
             _ => false,
         };
         matches.then_some(LoweredPrivateHelper::Init)
+    }
+
+    /// esbuild's `__privateMethod(obj, member, method)`, `__accessCheck(obj,
+    /// member, msg); return method`, and swc's and older Babel's
+    /// `_classPrivateMethodGet(receiver, set, fn)`, `if (!set.has(receiver))
+    /// throw …; return fn`.
+    fn method_get(&self, f: &FnView) -> Option<LoweredPrivateHelper> {
+        let (o, m, method) = (f.param(0), f.param(1), f.param(2));
+        let matches = match f.body.as_slice() {
+            [Stmt::Expr(check), Stmt::Return(ReturnStmt { arg: Some(ret), .. })] => {
+                is_param(ret, method) && self.is_access_check(&check.expr, o, m)
+            }
+            [Stmt::If(check), Stmt::Return(ReturnStmt { arg: Some(ret), .. })] => {
+                is_param(ret, method)
+                    && check.alt.is_none()
+                    && is_negated(&check.test)
+                        .is_some_and(|test| is_method_call_of(test, m, "has", &[o]))
+                    && is_throw_block(&check.cons)
+            }
+            _ => false,
+        };
+        matches.then_some(LoweredPrivateHelper::MethodGet {
+            receiver: 0,
+            brand: 1,
+            method: 2,
+        })
+    }
+
+    /// Babel's `_assertClassBrand(brand, receiver, value)`: called with three
+    /// arguments it returns `value` once the brand holds the receiver.
+    fn babel_brand_method(&self, f: &FnView) -> Option<LoweredPrivateHelper> {
+        self.babel_brand(f)?;
+        let [Stmt::If(check), Stmt::Throw(_)] = f.body.as_slice() else {
+            return None;
+        };
+        let (o, value) = (f.param(1), f.param(2));
+        let returns_value = match block_stmts(&check.cons) {
+            [Stmt::Return(ReturnStmt { arg: Some(ret), .. })] => {
+                matches!(strip_parens(ret), Expr::Cond(cond)
+                    if is_fewer_than_three_arguments(&cond.test)
+                        && is_param(&cond.cons, o)
+                        && is_param(&cond.alt, value))
+            }
+            [Stmt::If(_), Stmt::Return(ReturnStmt { arg: Some(ret), .. })] => is_param(ret, value),
+            _ => false,
+        };
+        returns_value.then_some(LoweredPrivateHelper::MethodGet {
+            receiver: 1,
+            brand: 0,
+            method: 2,
+        })
     }
 
     /// Babel's `_classPrivateFieldGet2(map, receiver)`:

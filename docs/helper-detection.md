@@ -683,18 +683,51 @@ These are proof requirements, not rewrite assumptions.
 The initializers promoted are the constructor's leading ones. A derived class
 defines its fields when `super(…)` returns, so there they must directly follow
 the constructor's only super call, a top-level statement, and may not read a
-binding the statements before it declare. A private-method brand add
+binding the statements before it declare. In a base class, public field
+initializers among them (Babel's `_defineProperty(this, "x", v)`, esbuild's
+`__publicField(this, "x", v)`, a data-descriptor `Object.defineProperty`) are
+promoted with them in order. A private field may also be promoted past
+tsc's `this.x = v` field assignment, which stays in the constructor, when
+neither can observe the other: both values are inert (below), the class
+declares no `x` accessor, and `x` is not `__proto__` (the Execution
+Environment Baseline rules out other inherited setters); a public field may
+not, as that would reorder the own keys. A private-method brand add
 (`__privateAdd(this, brand)`, Babel's `_classPrivateMethodInitSpec`,
-`brand.add(this)`) may come first: the method stays lowered, so a promoted
+`brand.add(this)`) may come first: when the method stays lowered, a promoted
 field now runs before the brand exists, and a field promoted past one must
 have a value that cannot observe it (a literal, a function, an empty literal
 or builtin collection, or no value). A read whose rewrite would change its
 meaning keeps the map: a callee or tag (`this.#x(…)` binds `this`) or a
 `delete` operand.
 
+Private methods are recovered first, because a lowered method reads the
+class's maps outside the class. A method lowered to a WeakSet brand and a
+function outside the class (esbuild's `__privateMethod(this, brand, fn)`,
+tsc's `__classPrivateFieldGet(this, brand, "m", fn)`, Babel's
+`_assertClassBrand(brand, this, fn)`, swc's and older Babel's
+`_classPrivateMethodGet(this, brand, fn)`, each followed by
+`.call(this, …)`) becomes `#fn(…) {…}` and `this.#fn(…)`. The constructor's
+leading initializers must add the brand, once. The brand and the function
+each have one definition, in the statement list that holds the class (a
+`new WeakSet()` or `function` expression with the backing-map lifetime, or a
+hoisted function declaration), and every other reference is that brand add
+or such a call with `this` as the receiver in the class body or in a method
+moving into it: never exported, written, read, or called otherwise, or the
+class keeps every method lowered. The function must be a `function` that names neither itself
+nor, by name, a class binding that is written or that the class body would
+shadow. Private accessors, static private methods, and a class reached only
+inside a later expression (`return new class {…}`) keep the lowered form.
+esbuild's `__publicField(Ctor, "x", v)` after the class is not recovered as
+a static field, as Babel's static `_defineProperty` is not.
+
 tsc get/set calls accept resolver-proven tslib named aliases, namespaces,
 direct `require("tslib")` members, and inline marker/body matches, and
-require field mode `"f"`. Babel 7.24+, swc (and older Babel releases with
+require field mode `"f"` (method mode `"m"` for a private method). esbuild's
+`__publicField` is matched by body over `__defNormalProp`, which must define
+the exact data descriptor `{ enumerable, configurable, writable: true, value
+}` through the global `Object.defineProperty` or a never-written alias of it
+when the key is in the object, and assign it otherwise; `__publicField` must
+pass its key through `typeof key !== "symbol" ? key + "" : key`. Babel 7.24+, swc (and older Babel releases with
 the same descriptor helpers), and esbuild helpers are recognized by body in
 `lowered_private_field_helpers.rs`, never by name, in any statement list (a
 UMD wrapper or an unsplit module factory holds them in a function body). Each

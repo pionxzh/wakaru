@@ -571,13 +571,15 @@ rationale, or level gating appear.
   (`Ctor.x = value` → `static x = value`) requires `standard+` and is
   skipped for derived classes — inherited static setters make assignment
   observably different from field definition.
-- **UnClassFields** — needs UnEs6Class. Babel constructor field recovery
-  (`_defineProperty(this, "x", value)` → `x = value`) is `standard+`, base
-  classes only, and skips initializers that reference constructor params or
-  `arguments`. Direct constructor assignments are preserved unless another
-  pattern proves they came from class fields. Private fields lowered to a
-  WeakMap (tsc, Babel, swc, esbuild) are recovered in base and derived
-  classes under the backing-map lifetime proof in helper-detection.md.
+- **UnClassFields** — needs UnEs6Class. Babel and esbuild constructor field
+  recovery (`_defineProperty(this, "x", value)`, `__publicField(this, "x",
+  value)` → `x = value`) is `standard+`, base classes only, and skips
+  initializers that reference constructor params or `arguments`. Direct
+  constructor assignments are preserved unless another pattern proves they
+  came from class fields. Private fields lowered to a WeakMap and private
+  methods lowered to a WeakSet brand (tsc, Babel, swc, esbuild) are recovered
+  in base and derived classes under the proofs in helper-detection.md;
+  methods first, since a lowered method reads the maps outside the class.
 - **UnAsyncAwait** — consumes `__awaiter`/`__generator` identities detected
   by `LocalHelperContext` directly (no alias renaming step). Its consumed
   inline TS helper cleanup must run after UnEsm (Exp 3: early cleanup strips

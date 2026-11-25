@@ -1436,13 +1436,32 @@ trim_fn = function() {{
 }
 
 #[test]
-fn private_maps_read_by_a_lowered_private_method_stay_lowered() {
-    // `trim_fn`, the lowered private method, reads the maps outside the class.
+fn recovers_the_maps_a_recovered_private_method_reads() {
+    // `trim_fn`, the lowered private method, reads the maps outside the
+    // class until it moves back in.
     let output = render(&esbuild_class_with_private_method(
         "__privateAdd(this, _items, []); __privateAdd(this, _limit);",
     ));
+    assert!(output.contains("#items = [];"), "{output}");
+    assert!(output.contains("#limit;"), "{output}");
+    assert!(output.contains("#trim() {"), "{output}");
+    assert!(output.contains("this.#trim();"), "{output}");
+    assert!(!output.contains("__private"), "{output}");
+}
+
+#[test]
+fn private_maps_read_by_a_lowered_private_method_stay_lowered() {
+    // The method is also exported, so it stays outside the class, and so
+    // do the maps it reads.
+    let output = render(&format!(
+        "{}export {{ trim_fn }};\n",
+        esbuild_class_with_private_method(
+            "__privateAdd(this, _items, []); __privateAdd(this, _limit);",
+        )
+    ));
     assert!(!output.contains("#items"), "{output}");
     assert!(!output.contains("#limit"), "{output}");
+    assert!(!output.contains("#trim"), "{output}");
 }
 
 #[test]
@@ -1548,4 +1567,488 @@ class Foo {
 }
 "#;
     assert_eq_normalized(&render(input), expected.trim());
+}
+
+// esbuild's helpers for a class with a public field and a private method,
+// below a target with class fields.
+const ESBUILD_CLASS_MEMBER_HELPERS: &str = r#"
+var __defProp = Object.defineProperty;
+var __typeError = (msg) => { throw TypeError(msg); };
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+var __accessCheck = (obj, member, msg) => member.has(obj) || __typeError("Cannot " + msg);
+var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read from private field"), getter ? getter.call(obj) : member.get(obj));
+var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
+var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
+"#;
+
+fn esbuild_meter() -> String {
+    format!(
+        r#"{ESBUILD_CLASS_MEMBER_HELPERS}
+var _gap, _Meter_instances, grow_fn;
+class Meter {{
+  constructor() {{
+    __privateAdd(this, _Meter_instances);
+    __publicField(this, "size", 1);
+    __privateAdd(this, _gap, 2);
+  }}
+  run(n) {{
+    return ["meter-run", __privateMethod(this, _Meter_instances, grow_fn).call(this, n)];
+  }}
+}}
+_gap = new WeakMap();
+_Meter_instances = new WeakSet();
+grow_fn = function(n) {{
+  this.size += __privateGet(this, _gap) * n;
+  return this.size;
+}};
+export {{ Meter }};
+"#
+    )
+}
+
+const RECOVERED_METER: &str = r#"
+class Meter {
+    size = 1;
+    #gap = 2;
+    #grow(n) {
+        this.size += this.#gap * n;
+        return this.size;
+    }
+    run(n) {
+        return [
+            "meter-run",
+            this.#grow(n)
+        ];
+    }
+}
+export { Meter };
+"#;
+
+#[test]
+fn recovers_esbuild_private_methods_and_public_fields() {
+    assert_eq_normalized(&render(&esbuild_meter()), RECOVERED_METER.trim());
+}
+
+#[test]
+fn recovers_minified_esbuild_private_methods_and_public_fields() {
+    let input = r#"var a=Object.defineProperty;var e=t=>{throw TypeError(t)};var b=(t,u,c)=>u in t?a(t,u,{enumerable:!0,configurable:!0,writable:!0,value:c}):t[u]=c;var i=(t,u,c)=>b(t,typeof u!="symbol"?u+"":u,c),o=(t,u,c)=>u.has(t)||e("Cannot "+c);var h=(t,u,c)=>(o(t,u,"read from private field"),c?c.call(t):u.get(t)),s=(t,u,c)=>u.has(t)?e("Cannot add the same private member more than once"):u instanceof WeakSet?u.add(t):u.set(t,c);var p=(t,u,c)=>(o(t,u,"access private method"),c);var n,r,k;class m{constructor(){s(this,r);i(this,"size",1);s(this,n,2)}run(t){return["meter-run",p(this,r,k).call(this,t)]}}n=new WeakMap,r=new WeakSet,k=function(t){return this.size+=h(this,n)*t,this.size};export{m as Meter};"#;
+    let output = render(input);
+    assert!(output.contains("size = 1;"), "{output}");
+    assert!(output.contains("#n = 2;"), "{output}");
+    assert!(output.contains("#k(t) {"), "{output}");
+    assert!(output.contains("this.#k(t)"), "{output}");
+    assert!(output.contains("this.size += this.#n * t"), "{output}");
+    for leftover in [
+        "WeakMap",
+        "WeakSet",
+        "defineProperty",
+        "constructor",
+        "has(",
+    ] {
+        assert!(!output.contains(leftover), "{leftover} left in {output}");
+    }
+}
+
+#[test]
+fn recovers_tsc_private_methods_past_a_field_assignment() {
+    let input = r#"
+"use strict";
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _Meter_instances, _Meter_gap, _Meter_grow;
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Meter = void 0;
+class Meter {
+    constructor() {
+        _Meter_instances.add(this);
+        this.size = 1;
+        _Meter_gap.set(this, 2);
+    }
+    run(n) {
+        return ["meter-run", __classPrivateFieldGet(this, _Meter_instances, "m", _Meter_grow).call(this, n)];
+    }
+}
+exports.Meter = Meter;
+_Meter_gap = new WeakMap(), _Meter_instances = new WeakSet(), _Meter_grow = function _Meter_grow(n) {
+    this.size += __classPrivateFieldGet(this, _Meter_gap, "f") * n;
+    return this.size;
+};
+"#;
+    // tsc assigns `size` rather than defining it, so it stays an assignment.
+    let expected = r#"
+class Meter {
+    #gap = 2;
+    constructor(){
+        this.size = 1;
+    }
+    #grow(n) {
+        this.size += this.#gap * n;
+        return this.size;
+    }
+    run(n) {
+        return [
+            "meter-run",
+            this.#grow(n)
+        ];
+    }
+}
+export { Meter };
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn recovers_babel_private_methods_and_public_fields() {
+    let input = r#"
+function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
+function _classCallCheck(a, n) { if (!(a instanceof n)) throw new TypeError("Cannot call a class as a function"); }
+function _defineProperties(e, r) { for (var t = 0; t < r.length; t++) { var o = r[t]; o.enumerable = o.enumerable || !1, o.configurable = !0, "value" in o && (o.writable = !0), Object.defineProperty(e, _toPropertyKey(o.key), o); } }
+function _createClass(e, r, t) { return r && _defineProperties(e.prototype, r), t && _defineProperties(e, t), Object.defineProperty(e, "prototype", { writable: !1 }), e; }
+function _classPrivateMethodInitSpec(e, a) { _checkPrivateRedeclaration(e, a), a.add(e); }
+function _classPrivateFieldInitSpec(e, t, a) { _checkPrivateRedeclaration(e, t), t.set(e, a); }
+function _checkPrivateRedeclaration(e, t) { if (t.has(e)) throw new TypeError("Cannot initialize the same private elements twice on an object"); }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
+function _classPrivateFieldGet(s, a) { return s.get(_assertClassBrand(s, a)); }
+function _assertClassBrand(e, t, n) { if ("function" == typeof e ? e === t : e.has(t)) return arguments.length < 3 ? t : n; throw new TypeError("Private element is not present on this object"); }
+var _gap = new WeakMap();
+var _Meter_brand = new WeakSet();
+export var Meter = function () {
+  function Meter() {
+    _classCallCheck(this, Meter);
+    _classPrivateMethodInitSpec(this, _Meter_brand);
+    _defineProperty(this, "size", 1);
+    _classPrivateFieldInitSpec(this, _gap, 2);
+  }
+  return _createClass(Meter, [{
+    key: "run",
+    value: function run(n) {
+      return ["meter-run", _assertClassBrand(_Meter_brand, this, _grow).call(this, n)];
+    }
+  }]);
+}();
+function _grow(n) {
+  this.size += _classPrivateFieldGet(_gap, this) * n;
+  return this.size;
+}
+"#;
+    let expected = RECOVERED_METER
+        .trim()
+        .trim_end_matches("export { Meter };")
+        .trim()
+        .replace("class Meter", "export class Meter");
+    let output = render(input);
+    // The class helpers `_createClass` leaves behind are not this rule's.
+    let class = &output[output.find("export class Meter").expect(&output)..];
+    assert_eq_normalized(class, &expected);
+    for helper in [
+        "_assertClassBrand",
+        "_classPrivate",
+        "_defineProperty(",
+        "WeakSet",
+    ] {
+        assert!(!output.contains(helper), "{helper} left in {output}");
+    }
+}
+
+#[test]
+fn recovers_swc_private_methods() {
+    let input = format!(
+        r#"{SWC_PRIVATE_HELPERS}
+function _class_private_method_get(receiver, privateSet, fn) {{
+    if (!privateSet.has(receiver)) {{
+        throw new TypeError("attempted to get private field on non-instance");
+    }}
+    return fn;
+}}
+function _class_private_method_init(obj, privateSet) {{
+    _check_private_redeclaration(obj, privateSet);
+    privateSet.add(obj);
+}}
+var _gap = new WeakMap(), _grow = new WeakSet();
+export class Meter {{
+    constructor() {{
+        _class_private_method_init(this, _grow);
+        _class_private_field_init(this, _gap, {{ writable: true, value: 2 }});
+    }}
+    run(n) {{
+        return _class_private_method_get(this, _grow, grow).call(this, n);
+    }}
+}}
+function grow(n) {{
+    return _class_private_field_get(this, _gap) * n;
+}}
+"#
+    );
+    let output = render(&input);
+    assert!(output.contains("#gap = 2;"), "{output}");
+    assert!(output.contains("#grow(n) {"), "{output}");
+    assert!(output.contains("return this.#gap * n;"), "{output}");
+    assert!(output.contains("return this.#grow(n);"), "{output}");
+    assert!(!output.contains("_class_"), "{output}");
+    assert!(!output.contains("WeakSet"), "{output}");
+}
+
+#[test]
+fn recovers_private_methods_of_a_derived_class_after_its_super_call() {
+    let input = esbuild_meter()
+        .replace("class Meter {", "class Base {}\nclass Meter extends Base {")
+        .replace(
+            "constructor() {\n    __privateAdd(this, _Meter_instances);",
+            "constructor() {\n    super();\n    __privateAdd(this, _Meter_instances);",
+        );
+    let output = render(&input);
+    assert!(output.contains("#grow(n) {"), "{output}");
+    assert!(output.contains("this.#grow(n)"), "{output}");
+    assert!(!output.contains("_Meter_instances"), "{output}");
+}
+
+#[test]
+fn recovers_private_methods_that_call_each_other() {
+    let input = esbuild_meter()
+        .replace("grow_fn;", "grow_fn, add_fn;")
+        .replace(
+            "  this.size += __privateGet(this, _gap) * n;\n  return this.size;",
+            "  return n > 0 ? __privateMethod(this, _Meter_instances, grow_fn).call(this, n - 1) + __privateMethod(this, _Meter_instances, add_fn).call(this) : this.size;",
+        )
+        .replace(
+            "export { Meter };",
+            "add_fn = function() {\n  return __privateGet(this, _gap);\n};\nexport { Meter };",
+        );
+    let output = render(&input);
+    assert!(output.contains("#gap = 2;"), "{output}");
+    assert!(output.contains("#grow(n) {"), "{output}");
+    assert!(output.contains("#add() {"), "{output}");
+    assert!(
+        output.contains("this.#grow(n - 1) + this.#add()"),
+        "{output}"
+    );
+    assert!(output.contains("return this.#gap;"), "{output}");
+    assert!(!output.contains("__private"), "{output}");
+    assert!(!output.contains("_fn"), "{output}");
+}
+
+#[test]
+fn a_recovered_private_method_may_name_its_unwritten_class() {
+    let input = esbuild_meter().replace("return this.size;", "return this instanceof Meter;");
+    let output = render(&input);
+    assert!(output.contains("#grow(n) {"), "{output}");
+    assert!(output.contains("return this instanceof Meter;"), "{output}");
+}
+
+#[test]
+fn private_methods_stay_lowered_without_proof_of_their_bindings() {
+    for (case, input) in [
+        (
+            "brand exported",
+            format!("{}export {{ _Meter_instances }};\n", esbuild_meter()),
+        ),
+        (
+            "brand read elsewhere",
+            esbuild_meter().replace(
+                "  run(n) {",
+                "  owns(x) { return _Meter_instances.has(x); }\n  run(n) {",
+            ),
+        ),
+        (
+            "method exported",
+            format!("{}export {{ grow_fn }};\n", esbuild_meter()),
+        ),
+        (
+            "method called outside the brand check",
+            format!(
+                "{}export function peek(x) {{ return grow_fn.call(x, 1); }}\n",
+                esbuild_meter()
+            ),
+        ),
+        (
+            "method assigned twice",
+            format!("{}grow_fn = function(n) {{ return n; }};\n", esbuild_meter()),
+        ),
+        (
+            "brand check on another receiver",
+            esbuild_meter().replace(
+                "  run(n) {",
+                "  poke(o) { return __privateMethod(o, _Meter_instances, grow_fn).call(o, 1); }\n  run(n) {",
+            ),
+        ),
+        (
+            "brand check result called without `.call(this)`",
+            esbuild_meter().replace(".call(this, n)", "(n)"),
+        ),
+        (
+            "an instance built before the method exists",
+            esbuild_meter().replace("grow_fn = function", "new Meter();\ngrow_fn = function"),
+        ),
+        (
+            "brand added twice",
+            esbuild_meter().replace(
+                "__privateAdd(this, _Meter_instances);",
+                "__privateAdd(this, _Meter_instances); __privateAdd(this, _Meter_instances);",
+            ),
+        ),
+        (
+            "brand added after a field",
+            esbuild_meter().replace(
+                "__privateAdd(this, _Meter_instances);\n    __publicField(this, \"size\", 1);",
+                "__publicField(this, \"size\", 1);\n    __privateAdd(this, _Meter_instances);",
+            ),
+        ),
+        (
+            "an arrow function",
+            esbuild_meter().replace("grow_fn = function(n) {", "grow_fn = (n) => {"),
+        ),
+        (
+            "a function that names itself",
+            esbuild_meter().replace(
+                "grow_fn = function(n) {",
+                "grow_fn = function grow(n) {\n  grow.calls = 1;",
+            ),
+        ),
+        (
+            "a function that names a written class binding",
+            format!(
+                "{}export function reset() {{ Meter = null; }}\n",
+                esbuild_meter().replace("return this.size;", "return Meter;")
+            ),
+        ),
+        (
+            "a brand check that skips the check",
+            esbuild_meter().replace(
+                "(__accessCheck(obj, member, \"access private method\"), method)",
+                "method",
+            ),
+        ),
+    ] {
+        let output = render(&input);
+        assert!(!output.contains("#grow"), "{case}: {output}");
+        assert!(output.contains("grow_fn"), "{case}: {output}");
+    }
+}
+
+#[test]
+fn public_field_helpers_need_the_esbuild_bodies() {
+    for (case, helpers) in [
+        (
+            "a non-enumerable descriptor",
+            ESBUILD_CLASS_MEMBER_HELPERS.replace("enumerable: true", "enumerable: false"),
+        ),
+        (
+            "no `in` test",
+            ESBUILD_CLASS_MEMBER_HELPERS.replace(
+                "key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value",
+                "__defProp(obj, key, { enumerable: true, configurable: true, writable: true, value })",
+            ),
+        ),
+        (
+            "a key that is not the property key",
+            ESBUILD_CLASS_MEMBER_HELPERS.replace("key + \"\" : key", "key + \"_\" : key"),
+        ),
+        (
+            "a shadowed `Object`",
+            ESBUILD_CLASS_MEMBER_HELPERS.replace(
+                "var __defProp = Object.defineProperty;",
+                "var Object = { defineProperty() {} };\nvar __defProp = Object.defineProperty;",
+            ),
+        ),
+    ] {
+        let input = esbuild_meter().replace(ESBUILD_CLASS_MEMBER_HELPERS, &helpers);
+        let output = render(&input);
+        assert!(
+            output.contains("__publicField(this, \"size\", 1)"),
+            "{case}: {output}"
+        );
+        assert!(!output.contains("size = 1;"), "{case}: {output}");
+    }
+}
+
+#[test]
+fn public_field_helper_calls_keep_the_field_guards() {
+    // A constructor parameter in the value.
+    let output = render(&esbuild_meter().replace(
+        "constructor() {\n    __privateAdd(this, _Meter_instances);\n    __publicField(this, \"size\", 1);",
+        "constructor(start) {\n    __privateAdd(this, _Meter_instances);\n    __publicField(this, \"size\", start);",
+    ));
+    assert!(output.contains("#grow(n) {"), "{output}");
+    assert!(
+        output.contains("__publicField(this, \"size\", start)"),
+        "{output}"
+    );
+    assert!(!output.contains("#gap = 2"), "{output}");
+
+    // A value that could observe a brand that stays lowered.
+    let output = render(&format!(
+        "{}export {{ _Meter_instances }};\n",
+        esbuild_meter().replace(
+            "__publicField(this, \"size\", 1);",
+            "__publicField(this, \"size\", this.seed());"
+        )
+    ));
+    assert!(
+        output.contains("__publicField(this, \"size\", this.seed())"),
+        "{output}"
+    );
+
+    // A static field is not recovered from `__publicField` after the class.
+    let output = render(&format!(
+        "{}__publicField(Meter, \"zero\", 0);\n",
+        esbuild_meter()
+    ));
+    assert!(
+        output.contains("__publicField(Meter, \"zero\", 0)"),
+        "{output}"
+    );
+    assert!(output.contains("size = 1;"), "{output}");
+}
+
+#[test]
+fn private_fields_step_over_a_field_assignment_only_when_neither_observes_the_other() {
+    let tsc = |constructor: &str, members: &str| {
+        format!(
+            r#"
+var __classPrivateFieldGet = function(receiver, state, kind, f) {{
+    return state.get(receiver);
+}};
+var _Meter_gap;
+export class Meter {{
+    constructor() {{ {constructor} }}
+    {members}
+    read() {{ return __classPrivateFieldGet(this, _Meter_gap, "f"); }}
+}}
+_Meter_gap = new WeakMap();
+"#
+        )
+    };
+    let recovered = render(&tsc("this.size = 1; _Meter_gap.set(this, 2);", ""));
+    assert!(recovered.contains("#gap = 2;"), "{recovered}");
+    assert!(recovered.contains("this.size = 1;"), "{recovered}");
+    for (case, input) in [
+        (
+            "a setter for the key",
+            tsc(
+                "this.size = 1; _Meter_gap.set(this, 2);",
+                "set size(v) { this.read(); }",
+            ),
+        ),
+        (
+            "an assigned value that runs code",
+            tsc("this.size = this.read(); _Meter_gap.set(this, 2);", ""),
+        ),
+        (
+            "a private value that runs code",
+            tsc("this.size = 1; _Meter_gap.set(this, this.size);", ""),
+        ),
+        (
+            "an assignment to `__proto__`",
+            tsc("this.__proto__ = null; _Meter_gap.set(this, 2);", ""),
+        ),
+    ] {
+        let output = render(&input);
+        assert!(!output.contains("#gap"), "{case}: {output}");
+    }
 }
