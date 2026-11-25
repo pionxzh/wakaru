@@ -186,6 +186,14 @@ Rules still own domain-specific shape recognition. For example:
   binding that is written anywhere is not one. Outside the module's own scope,
   `__async` must also apply its third parameter to the first two, since its
   top-level shape check (`new Promise` plus any `.apply`) is loose.
+- `un_esbuild_keep_names.rs` recognizes esbuild's `keepNames` helper
+  (`__name`) by body, the same way and in any statement list, through an
+  `Object.defineProperty` alias or the global itself. It drops a wrapper only
+  where the language gives the value the same `name` without it, and runs
+  after every rename, so the string is compared with the final binding name.
+  The unpacker's surrounding-code split reuses its descriptor check for the
+  getters esbuild wraps in webpack's `require.d`. A helper imported from
+  another module is not followed.
 - `un_for_of.rs` recognizes Closure Compiler's `$jscomp.makeIterator` call
   locally. It does not freeze the helper function body, which is versioned
   runtime code outside the loop being recovered. Instead it requires the exact

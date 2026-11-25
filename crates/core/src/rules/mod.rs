@@ -57,6 +57,7 @@ mod un_double_negation;
 pub(crate) mod un_enum;
 mod un_es6_class;
 mod un_esbuild_cjs_wrapper;
+pub(crate) mod un_esbuild_keep_names;
 mod un_esm;
 pub(crate) mod un_esmodule_flag;
 mod un_export_rename;
@@ -222,6 +223,7 @@ pub use un_double_negation::UnDoubleNegation;
 pub use un_enum::UnEnum;
 pub use un_es6_class::UnEs6Class;
 pub use un_esbuild_cjs_wrapper::UnEsbuildCjsWrapper;
+pub use un_esbuild_keep_names::UnEsbuildKeepNames;
 pub(crate) use un_esm::contains_local_self_require;
 pub(crate) use un_esm::export_storage::{
     analyze_export_storage, analyze_export_storage_without_markers, ExportStorage,

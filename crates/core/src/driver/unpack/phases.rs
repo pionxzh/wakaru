@@ -77,7 +77,7 @@ use crate::rules::{
     apply_rules, apply_rules_to_recovered_module, contains_local_self_require,
     lowers_to_commonjs_namespace, ImportDedup, ImportSourceRename, PipelineMode, RewriteLevel,
     RulePipelineOptions, SimplifySequence, UnAssignmentMerging, UnConditionals,
-    UnConditionalsAssignmentOnly, UnImportRename, UnOptionalChaining,
+    UnConditionalsAssignmentOnly, UnEsbuildKeepNames, UnImportRename, UnOptionalChaining,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::synthetic_import_cleanup::downgrade_unused_synthetic_imports;
@@ -376,8 +376,8 @@ fn run_rules_before_late_recovery(
 /// `ts_helper_namespace_factory_exports`); with all of them empty, a lookup
 /// finds what a run without facts finds. `UnEs6Class` and
 /// `UnPrototypeClass` read this module's `CallRequiredPlan` pins. Only
-/// `ImportSourceRename`'s gate reads the pipeline mode, and it skips the
-/// range under both unpack modes alike. A rule added to the range that reads
+/// `ImportSourceRename`'s and `UnEsbuildKeepNames`'s gates read the pipeline
+/// mode, and they skip the range under both unpack modes alike. A rule added to the range that reads
 /// facts another way must be covered here.
 fn range_ignores_facts(module: &Module, facts: LateRangeFacts<'_>, filename: &str) -> bool {
     struct ProviderSources<'a> {
@@ -1575,6 +1575,9 @@ pub(super) fn unpack_multi_module_with_plan(
             if options.level >= RewriteLevel::Standard {
                 module.visit_mut_with(&mut ImportSourceRename::new(unresolved_mark));
             }
+            // After every rename, like its gated registry entry: a keep-names
+            // wrapper goes only when its string equals the final name.
+            module.visit_mut_with(&mut UnEsbuildKeepNames::new(unresolved_mark));
 
             let final_filename = rename_ref
                 .get(&unpacked.module.filename)

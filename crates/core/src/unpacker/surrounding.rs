@@ -27,6 +27,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::module_path::relative_import_specifier;
 use crate::rules::eval_utils::{has_dynamic_scope_construct, node_has_dynamic_scope_construct};
 use crate::rules::rename_utils::{rename_bindings_in_module, BindingRename};
+use crate::rules::un_esbuild_keep_names::is_name_descriptor;
 use crate::unpacker::chunk_prelude::declares_top_level;
 use crate::unpacker::{
     emit_module_with_source_map, resolve_prepared_module, spans_byte_ranges, UnpackedModule,
@@ -732,55 +733,6 @@ fn find_name_helpers(
             Some((binding.sym.clone(), alias))
         })
         .collect()
-}
-
-/// `{ value: <value>, configurable: true }`, in either order, with `value`
-/// shorthand and `!0` for `true` allowed.
-fn is_name_descriptor(expr: &Expr, value: &Ident) -> bool {
-    let Expr::Object(object) = expr else {
-        return false;
-    };
-    let mut has_value = false;
-    let mut has_configurable = false;
-    for prop in &object.props {
-        let PropOrSpread::Prop(prop) = prop else {
-            return false;
-        };
-        match &**prop {
-            Prop::Shorthand(ident) if ident.sym == "value" && ident.to_id() == value.to_id() => {
-                has_value = true;
-            }
-            Prop::KeyValue(KeyValueProp {
-                key: PropName::Ident(key),
-                value: prop_value,
-            }) if key.sym == "value" => {
-                if !matches!(&**prop_value, Expr::Ident(ident) if ident.to_id() == value.to_id()) {
-                    return false;
-                }
-                has_value = true;
-            }
-            Prop::KeyValue(KeyValueProp {
-                key: PropName::Ident(key),
-                value: prop_value,
-            }) if key.sym == "configurable" => {
-                let is_true = match &**prop_value {
-                    Expr::Lit(Lit::Bool(flag)) => flag.value,
-                    Expr::Unary(UnaryExpr {
-                        op: UnaryOp::Bang,
-                        arg,
-                        ..
-                    }) => matches!(&**arg, Expr::Lit(Lit::Num(num)) if num.value == 0.0),
-                    _ => false,
-                };
-                if !is_true {
-                    return false;
-                }
-                has_configurable = true;
-            }
-            _ => return false,
-        }
-    }
-    has_value && has_configurable
 }
 
 /// A keep-names helper call that wraps a getter webpack's `require.d` installs:

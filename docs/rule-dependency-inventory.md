@@ -809,6 +809,17 @@ rationale, or level gating appear.
   back names the import, not its provisional `module-<id>`. Gated at
   `standard` like SmartRename. In a single-file decompile a source-map
   rename (`-m`) runs after the pipeline and overrides its names.
+- **UnEsbuildKeepNames** — drops an esbuild `keepNames` wrapper
+  (`__name(value, "x")`, `static { __name(this, "x") }`) only when the
+  string equals the name the language gives the value without it, read
+  from the binding's final name. It therefore runs after every pass that
+  renames a binding (SmartRename2, UnExportRename2, ImportSourceRename); a
+  string the final name does not match keeps the wrapper and the original
+  name. Unpack skips it in the rule range and runs it on each finished
+  Phase 2 module, after the late ESM recovery's SmartRename and
+  UnExportRename passes and source-map names; a single-file decompile with
+  `-m` runs it again after source-map names. Every level: it changes no
+  observable `name`.
 - **UnReturn** — removes tail `return undefined`; runs before the final
   UnConditionals pass, which can simplify patterns this exposes.
 

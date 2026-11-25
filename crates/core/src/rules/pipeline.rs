@@ -139,6 +139,18 @@ fn import_source_rename_enabled(ctx: RuleRunContext<'_>) -> bool {
         )
 }
 
+/// Unpack's Phase 2 runs `UnEsbuildKeepNames` on the finished module
+/// instead, after the late ESM recovery's `SmartRename` and
+/// `UnExportRename` passes and source-map names: a wrapper goes only when
+/// its string equals the binding's final name. The Phase 1 prediction of
+/// that range follows Phase 2.
+fn un_esbuild_keep_names_enabled(ctx: RuleRunContext<'_>) -> bool {
+    !matches!(
+        ctx.mode,
+        PipelineMode::UnpackPhase2 | PipelineMode::UnpackLatePrediction
+    )
+}
+
 fn aggressive_only(ctx: RuleRunContext<'_>) -> bool {
     ctx.rewrite_level == RewriteLevel::Aggressive
 }
@@ -641,6 +653,9 @@ runner!(run_smart_rename_second_pass, |ctx| {
 runner!(run_import_source_rename, |ctx| ImportSourceRename::new(
     ctx.unresolved_mark
 ));
+runner!(run_un_esbuild_keep_names, |ctx| UnEsbuildKeepNames::new(
+    ctx.unresolved_mark
+));
 runner!(run_dead_uninitialized_decls, DeadUninitializedDecls);
 
 fn run_dead_decls(module: &mut Module, ctx: RuleRunContext<'_>) {
@@ -924,6 +939,15 @@ define_rule_registry! {
         "SmartRename2",
         "UnImportRename2",
         "UnExportRename2"
+    ]),
+    // A keep-names wrapper goes only when its string equals the name the
+    // output gives the value, so this runs after every pass that renames a
+    // binding: a string the final name does not match keeps the wrapper.
+    // Unpack runs it on the finished module instead (see its gate).
+    ("UnEsbuildKeepNames", Cleanup, run_un_esbuild_keep_names, un_esbuild_keep_names_enabled, requires: [
+        "SmartRename2",
+        "UnExportRename2",
+        "ImportSourceRename"
     ]),
     // Late structural rewrites can consume uninitialized temps used by lowered
     // optional chaining / nullish coalescing. Keep this after name-recovery

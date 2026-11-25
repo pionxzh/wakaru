@@ -15,7 +15,9 @@ use super::io::{
 };
 use super::output_finalize::strip_redundant_module_use_strict;
 use super::types::{DecompileOptions, DecompileOutput};
-use crate::rules::{apply_rules, ImportDedup, PipelineMode, RulePipelineOptions, UnImportRename};
+use crate::rules::{
+    apply_rules, ImportDedup, PipelineMode, RulePipelineOptions, UnEsbuildKeepNames, UnImportRename,
+};
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 
 pub fn decompile(source: &str, options: DecompileOptions) -> Result<DecompileOutput> {
@@ -83,6 +85,9 @@ pub fn decompile_owned(
             module.visit_mut_with(&mut ImportDedup);
             apply_sourcemap_renames(&mut module, &sm, &cm, unresolved_mark);
             module.visit_mut_with(&mut UnImportRename::new(unresolved_mark));
+            // Source-map names can make a keep-names wrapper's string match
+            // the binding it names.
+            module.visit_mut_with(&mut UnEsbuildKeepNames::new(unresolved_mark));
         }
 
         if options.level >= crate::rules::RewriteLevel::Standard {
