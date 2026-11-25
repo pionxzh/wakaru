@@ -1471,3 +1471,148 @@ use(out);
         "{output}"
     );
 }
+
+// esbuild's IIFE format keeps the runtime helpers and every scope-hoisted
+// module in the IIFE's function body; the helpers are matched there too.
+// producer esbuild@0.25 --bundle --format=iife --target=es2016
+const ESBUILD_IIFE_SPREAD_PREAMBLE: &str = r#"
+  var __defProp = Object.defineProperty;
+  var __defProps = Object.defineProperties;
+  var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
+  var __getOwnPropSymbols = Object.getOwnPropertySymbols;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __propIsEnum = Object.prototype.propertyIsEnumerable;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+  var __spreadValues = (a, b) => {
+    for (var prop in b || (b = {}))
+      if (__hasOwnProp.call(b, prop))
+        __defNormalProp(a, prop, b[prop]);
+    if (__getOwnPropSymbols)
+      for (var prop of __getOwnPropSymbols(b)) {
+        if (__propIsEnum.call(b, prop))
+          __defNormalProp(a, prop, b[prop]);
+      }
+    return a;
+  };
+  var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
+"#;
+
+#[test]
+fn detects_esbuild_object_spread_helpers_inside_an_iife() {
+    let input = format!(
+        r#"
+var lib = (() => {{
+{ESBUILD_IIFE_SPREAD_PREAMBLE}
+  function merge(base, name) {{
+    return __spreadProps(__spreadValues({{}}, base), {{ name }});
+  }}
+  return {{ merge }};
+}})();
+"#
+    );
+    let expected = r#"
+const lib = (() => {
+  function merge(base, name) {
+    return { ...base, name };
+  }
+  return { merge };
+})();
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn detects_minified_esbuild_object_spread_helpers_inside_an_iife() {
+    // producer esbuild@0.25 --bundle --format=iife --target=es2016 --minify
+    let input = r#"
+var lib=(()=>{var p=Object.defineProperty,g=Object.defineProperties,j=Object.getOwnPropertyDescriptors,i=Object.getOwnPropertySymbols;var d=Object.prototype.hasOwnProperty,u=Object.prototype.propertyIsEnumerable;var l=(t,e,o)=>e in t?p(t,e,{enumerable:!0,configurable:!0,writable:!0,value:o}):t[e]=o,f=(t,e)=>{for(var o in e||(e={}))d.call(e,o)&&l(t,o,e[o]);if(i)for(var o of i(e))u.call(e,o)&&l(t,o,e[o]);return t},x=(t,e)=>g(t,j(e));function m(t,n){return x(f({},t),{name:n})}return{merge:m}})();
+"#;
+    let expected = r#"
+const lib = (() => {
+  function merge(t, name) {
+    return { ...t, name };
+  }
+  return { merge };
+})();
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn iife_spread_helper_shadowed_in_an_inner_scope_keeps_that_call() {
+    // `keep`'s parameter spells `__spreadValues` but is its own binding: its
+    // call is not the helper's and stays a call.
+    let input = format!(
+        r#"
+var lib = (() => {{
+{ESBUILD_IIFE_SPREAD_PREAMBLE}
+  function keep(__spreadValues, base) {{
+    return __spreadValues({{}}, base);
+  }}
+  function merge(base) {{
+    return __spreadValues({{}}, base);
+  }}
+  return [keep, merge];
+}})();
+"#
+    );
+    let output = render_rule(&input, UnObjectSpread::new_with_mark);
+    let expected = r#"
+var lib = (() => {
+  function keep(__spreadValues, base) {
+    return __spreadValues({}, base);
+  }
+  function merge(base) {
+    return { ...base };
+  }
+  return [keep, merge];
+})();
+"#;
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn iife_spread_helper_that_is_reassigned_is_not_a_helper() {
+    let input = format!(
+        r#"
+var lib = (() => {{
+{ESBUILD_IIFE_SPREAD_PREAMBLE}
+  function swap(next) {{
+    __spreadValues = next;
+  }}
+  function merge(base) {{
+    return __spreadValues({{}}, base);
+  }}
+  return [swap, merge];
+}})();
+"#
+    );
+    // The unused `__spreadProps` and its aliases go as at the top level; the
+    // written `__spreadValues` and its call stay.
+    let output = render_rule(&input, UnObjectSpread::new_with_mark);
+    assert!(output.contains("var __spreadValues = (a, b)=>"), "{output}");
+    assert!(
+        output.contains("return __spreadValues({}, base);"),
+        "{output}"
+    );
+    assert!(output.contains("var __defNormalProp = "), "{output}");
+}
+
+#[test]
+fn iife_spread_shaped_helper_over_a_shadowed_object_is_not_a_helper() {
+    // The IIFE's own `Object` parameter is not the global, so the aliases are
+    // not builtins and the same-shaped helpers are user code.
+    let input = format!(
+        r#"
+var lib = ((Object) => {{
+{ESBUILD_IIFE_SPREAD_PREAMBLE}
+  function merge(base) {{
+    return __spreadValues({{}}, base);
+  }}
+  return merge;
+}})(fake);
+"#
+    );
+    let output = render_rule(&input, UnObjectSpread::new_with_mark);
+    assert_eq_normalized(&output, &input);
+}

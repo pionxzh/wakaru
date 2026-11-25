@@ -178,6 +178,14 @@ Rules still own domain-specific shape recognition. For example:
   so moving this in would couple the scanner to esbuild internals. This is the
   documented "deliberate exception" the unification proposal anticipated; see
   [learnings/helper-detection-pattern-engine.md](learnings/helper-detection-pattern-engine.md).
+  `un_object_rest.rs` matches `__objRest` the same way, and `un_regenerator.rs`
+  matches `__async` by body. All three read declarations in any statement list
+  (`helper_matcher::for_each_initialized_declarator`), because esbuild's IIFE
+  format keeps the helpers in the IIFE's function body; a call is rewritten
+  only when its callee resolves to the helper binding, and an alias or helper
+  binding that is written anywhere is not one. Outside the module's own scope,
+  `__async` must also apply its third parameter to the first two, since its
+  top-level shape check (`new Promise` plus any `.apply`) is loose.
 - `un_for_of.rs` recognizes Closure Compiler's `$jscomp.makeIterator` call
   locally. It does not freeze the helper function body, which is versioned
   runtime code outside the loop being recovered. Instead it requires the exact

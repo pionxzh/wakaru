@@ -2070,3 +2070,146 @@ use(x, first, y, second);
 "#;
     assert_eq_normalized(&render_rule(source, UnObjectRest::new), expected);
 }
+
+// esbuild's IIFE format keeps the runtime helpers and every scope-hoisted
+// module in the IIFE's function body; the helper is matched there too.
+// producer esbuild@0.25 --bundle --format=iife --target=es2016
+const ESBUILD_IIFE_REST_PREAMBLE: &str = r#"
+  var __getOwnPropSymbols = Object.getOwnPropertySymbols;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __propIsEnum = Object.prototype.propertyIsEnumerable;
+  var __objRest = (source, exclude) => {
+    var target = {};
+    for (var prop in source)
+      if (__hasOwnProp.call(source, prop) && exclude.indexOf(prop) < 0)
+        target[prop] = source[prop];
+    if (source != null && __getOwnPropSymbols)
+      for (var prop of __getOwnPropSymbols(source)) {
+        if (exclude.indexOf(prop) < 0 && __propIsEnum.call(source, prop))
+          target[prop] = source[prop];
+      }
+    return target;
+  };
+"#;
+
+#[test]
+fn esbuild_rest_helper_inside_an_iife() {
+    let input = format!(
+        r#"
+var lib = (() => {{
+{ESBUILD_IIFE_REST_PREAMBLE}
+  function pick(record) {{
+    const _a = record, {{ id }} = _a, rest = __objRest(_a, ["id"]);
+    return [id, rest];
+  }}
+  return {{ pick }};
+}})();
+"#
+    );
+    let expected = r#"
+const lib = (() => {
+  function pick({ id, ...rest }) {
+    return [id, rest];
+  }
+  return { pick };
+})();
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}
+
+#[test]
+fn minified_esbuild_rest_helper_inside_an_iife() {
+    // producer esbuild@0.25 --bundle --format=iife --target=es2016 --minify
+    let input = r#"
+var lib=(()=>{var i=Object.getOwnPropertySymbols;var d=Object.prototype.hasOwnProperty,u=Object.prototype.propertyIsEnumerable;var k=(t,e)=>{var o={};for(var r in t)d.call(t,r)&&e.indexOf(r)<0&&(o[r]=t[r]);if(t!=null&&i)for(var r of i(t))e.indexOf(r)<0&&u.call(t,r)&&(o[r]=t[r]);return o};function p(t){let r=t,{id:e}=r,o=k(r,["id"]);return[e,o]}return{pick:p}})();
+"#;
+    let expected = r#"
+const lib = (() => {
+  function pick(t) {
+    let r = t;
+    let { id, ...rest } = r;
+    return [id, rest];
+  }
+  return { pick };
+})();
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn iife_rest_helper_shadowed_in_an_inner_scope_keeps_that_call() {
+    // `keep`'s parameter spells `__objRest` but is its own binding: its call
+    // is not the helper's and stays a call.
+    let input = format!(
+        r#"
+var lib = (() => {{
+{ESBUILD_IIFE_REST_PREAMBLE}
+  function keep(__objRest, record) {{
+    const rest = __objRest(record, ["id"]);
+    return rest;
+  }}
+  function pick(record) {{
+    const rest = __objRest(record, ["id"]);
+    return rest;
+  }}
+  return [keep, pick];
+}})();
+"#
+    );
+    let output = render_rule(&input, UnObjectRest::new);
+    let expected = r#"
+var lib = (() => {
+  function keep(__objRest, record) {
+    const rest = __objRest(record, ["id"]);
+    return rest;
+  }
+  function pick(record) {
+    const { id: _id, ...rest } = record;
+    return rest;
+  }
+  return [keep, pick];
+})();
+"#;
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn iife_rest_helper_that_is_reassigned_is_not_a_helper() {
+    let input = format!(
+        r#"
+var lib = (() => {{
+{ESBUILD_IIFE_REST_PREAMBLE}
+  function swap(next) {{
+    __objRest = next;
+  }}
+  function pick(record) {{
+    const rest = __objRest(record, ["id"]);
+    return rest;
+  }}
+  return [swap, pick];
+}})();
+"#
+    );
+    let output = render_rule(&input, UnObjectRest::new);
+    assert_eq_normalized(&output, &input);
+}
+
+#[test]
+fn iife_rest_shaped_helper_over_a_shadowed_object_is_not_a_helper() {
+    // The IIFE's own `Object` parameter is not the global, so the aliases are
+    // not builtins and the same-shaped helper is user code.
+    let input = format!(
+        r#"
+var lib = ((Object) => {{
+{ESBUILD_IIFE_REST_PREAMBLE}
+  function pick(record) {{
+    const rest = __objRest(record, ["id"]);
+    return rest;
+  }}
+  return pick;
+}})(fake);
+"#
+    );
+    let output = render_rule(&input, UnObjectRest::new);
+    assert_eq_normalized(&output, &input);
+}

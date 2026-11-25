@@ -20,7 +20,10 @@ use super::decl_utils::{
     BindingId,
 };
 use super::eval_utils::module_has_with_stmt;
-use super::helper_matcher::{binding_key, member_prop_name, remove_unused_helper_declarations};
+use super::helper_matcher::{
+    binding_key, expr_matches_binding, for_each_initialized_declarator, member_prop_name,
+    remove_unused_helper_declarations, DeclaratorScope,
+};
 use super::remove_void::finalize_synthesized_undefined;
 use super::state_machine::{
     invert_condition, stmts_contain_state_opcode_return, CatchBindings, ForwardJumpJoin,
@@ -4217,30 +4220,74 @@ fn unwrap_esbuild_yield_star_arg(
     Some(call.args[0].expr.clone())
 }
 
+/// esbuild's `__async` declarations that are never written. An IIFE bundle
+/// keeps the helper in the IIFE's function body, so declarations in nested
+/// scopes count too; there the loose top-level shape (a `new Promise` and
+/// some `.apply`) is not enough, and the body must step its own third
+/// parameter as `generator.apply(__this, __arguments)`.
 fn collect_esbuild_async_helpers(module: &Module, unresolved_mark: Mark) -> Vec<BindingKey> {
-    module
-        .body
-        .iter()
-        .flat_map(|item| {
-            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
-                return Vec::new();
-            };
-            var.decls
-                .iter()
-                .filter_map(|decl| {
-                    let Pat::Ident(binding) = &decl.name else {
-                        return None;
-                    };
-                    let init = decl.init.as_deref()?;
-                    if is_esbuild_async_helper_binding(&binding.id.sym, init, unresolved_mark) {
-                        Some((binding.id.sym.clone(), binding.id.ctxt))
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect()
+    let mut helpers = Vec::new();
+    for_each_initialized_declarator(module, |binding, init, scope| {
+        if is_esbuild_async_helper_binding(&binding.sym, init, unresolved_mark)
+            && (scope == DeclaratorScope::Module || esbuild_async_helper_applies_own_params(init))
+        {
+            helpers.push(binding_key(binding));
+        }
+    });
+    if !helpers.is_empty() {
+        let written =
+            crate::analysis::binding_uses::BindingUseIndex::collect_direct_write_bindings(module);
+        helpers.retain(|key| !written.contains(key));
+    }
+    helpers
+}
+
+/// `(a, b, g) => … g.apply(a, b) …`: the helper's three plain parameters,
+/// with the third applied to the first two.
+fn esbuild_async_helper_applies_own_params(init: &Expr) -> bool {
+    let params: Vec<&Pat> = match strip_parens(init) {
+        Expr::Arrow(arrow) => arrow.params.iter().collect(),
+        Expr::Fn(fn_expr) => fn_expr.function.params.iter().map(|p| &p.pat).collect(),
+        _ => return false,
+    };
+    let [Pat::Ident(this_arg), Pat::Ident(args), Pat::Ident(generator)] = params.as_slice() else {
+        return false;
+    };
+    struct ApplyFinder {
+        this_arg: BindingKey,
+        args: BindingKey,
+        generator: BindingKey,
+        found: bool,
+    }
+    impl Visit for ApplyFinder {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            let is = |expr: &Expr, key: &BindingKey| expr_matches_binding(strip_parens(expr), key);
+            if let Some(Expr::Member(member)) = call.callee.as_expr().map(|c| strip_parens(c)) {
+                if member_prop_name(&member.prop, "apply")
+                    && is(&member.obj, &self.generator)
+                    && matches!(
+                        call.args.as_slice(),
+                        [first, second]
+                            if first.spread.is_none()
+                                && second.spread.is_none()
+                                && is(&first.expr, &self.this_arg)
+                                && is(&second.expr, &self.args)
+                    )
+                {
+                    self.found = true;
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+    let mut finder = ApplyFinder {
+        this_arg: binding_key(&this_arg.id),
+        args: binding_key(&args.id),
+        generator: binding_key(&generator.id),
+        found: false,
+    };
+    init.visit_with(&mut finder);
+    finder.found
 }
 
 /// Whether `name = init` declares esbuild's `__async` helper: the name is

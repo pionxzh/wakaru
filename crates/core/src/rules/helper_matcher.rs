@@ -3,7 +3,7 @@ use crate::collections::HashSet;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     BindingIdent, Callee, Decl, Expr, Ident, ImportSpecifier, Lit, MemberProp, Module, ModuleItem,
-    Pat, Stmt, VarDecl, VarDeclarator,
+    Pat, Stmt, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -44,25 +44,69 @@ pub(crate) fn member_prop_name(prop: &MemberProp, name: &str) -> bool {
     static_member_prop_name(prop) == Some(name)
 }
 
-/// The module's top-level `var`/`let`/`const` declarations, exported in
-/// place (`export var h = …`) or not. Unpack's scope-hoist split writes the
-/// bindings a piece shares as `export var`, so a helper matcher that reads
-/// only plain declarations misses them there.
-pub(crate) fn top_level_var_decls(module: &Module) -> impl Iterator<Item = &VarDecl> {
-    module.body.iter().filter_map(|item| match item {
-        ModuleItem::Stmt(swc_core::ecma::ast::Stmt::Decl(Decl::Var(var))) => Some(var.as_ref()),
-        ModuleItem::ModuleDecl(swc_core::ecma::ast::ModuleDecl::ExportDecl(export)) => {
-            match &export.decl {
-                Decl::Var(var) => Some(var.as_ref()),
-                _ => None,
-            }
-        }
-        _ => None,
-    })
-}
-
 pub(crate) fn var_declarator_binding_key(decl: &VarDeclarator) -> Option<BindingKey> {
     binding_key_from_ident_pat(&decl.name)
+}
+
+/// Where an initialized declarator sits, for matchers that need more proof
+/// away from the module's own top level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DeclaratorScope {
+    /// The module's own var scope: a module-body statement or a block in it.
+    Module,
+    /// Inside a function, arrow, or class body, such as the IIFE body of a
+    /// bundle that wraps its scope-hoisted modules and runtime helpers.
+    Nested,
+}
+
+/// Calls `visit` with the binding and initializer of every declarator in the
+/// module that binds a plain identifier and has an initializer, in any
+/// statement list, `export var h = …` included (unpack's scope-hoist split
+/// writes the bindings a piece shares that way). Bundles in IIFE format (esbuild's browser default) keep
+/// their runtime helpers in the IIFE's function body, so a helper matcher that
+/// reads only `module.body` misses them.
+///
+/// This only enumerates declarations; whether a call reaches one is the
+/// caller's question. Resolver identity answers the scope half: a call whose
+/// callee carries the declarator's `(sym, ctxt)` names exactly that binding,
+/// so a same-spelled binding in an inner scope never matches. The caller still
+/// owns the write half (see `BindingUseIndex::collect_direct_write_bindings`).
+pub(crate) fn for_each_initialized_declarator(
+    module: &Module,
+    visit: impl FnMut(&Ident, &Expr, DeclaratorScope),
+) {
+    struct Walker<F> {
+        visit: F,
+        scope: DeclaratorScope,
+    }
+    impl<F: FnMut(&Ident, &Expr, DeclaratorScope)> Walker<F> {
+        fn nested<N: VisitWith<Self>>(&mut self, node: &N) {
+            let outer = std::mem::replace(&mut self.scope, DeclaratorScope::Nested);
+            node.visit_children_with(self);
+            self.scope = outer;
+        }
+    }
+    impl<F: FnMut(&Ident, &Expr, DeclaratorScope)> Visit for Walker<F> {
+        fn visit_function(&mut self, function: &swc_core::ecma::ast::Function) {
+            self.nested(function);
+        }
+        fn visit_arrow_expr(&mut self, arrow: &swc_core::ecma::ast::ArrowExpr) {
+            self.nested(arrow);
+        }
+        fn visit_class(&mut self, class: &swc_core::ecma::ast::Class) {
+            self.nested(class);
+        }
+        fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+            if let (Pat::Ident(binding), Some(init)) = (&decl.name, decl.init.as_deref()) {
+                (self.visit)(&binding.id, init, self.scope);
+            }
+            decl.visit_children_with(self);
+        }
+    }
+    module.visit_with(&mut Walker {
+        visit,
+        scope: DeclaratorScope::Module,
+    });
 }
 
 pub(crate) fn import_specifier_binding_key(specifier: &ImportSpecifier) -> BindingKey {

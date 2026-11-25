@@ -23,14 +23,16 @@ use super::cross_module_helper_refs::{
 };
 use super::decl_utils::fresh_binding_ident;
 use super::helper_matcher::{
-    binding_key, member_prop_name, removable_without_remaining_refs,
-    remove_fn_decls_from_body_by_binding, remove_import_specifiers_by_binding,
-    remove_var_declarators_by_binding, static_member_prop_name, top_level_var_decls,
-    var_declarator_binding_key, NumericRequireNamespaces,
+    binding_key, for_each_initialized_declarator, member_prop_name,
+    removable_without_remaining_refs, remove_fn_decls_from_body_by_binding,
+    remove_import_specifiers_by_binding, remove_unused_helper_declarations,
+    remove_var_declarators_by_binding, static_member_prop_name, var_declarator_binding_key,
+    NumericRequireNamespaces,
 };
 use super::transpiler_helper_utils::{
     remove_unused_helper_imports, BindingKey, LocalHelperContext, TranspilerHelperKind,
 };
+use crate::analysis::binding_uses::BindingUseIndex;
 
 /// Convert inline `_objectWithoutPropertiesLoose` IIFEs to object rest destructuring.
 ///
@@ -1383,6 +1385,10 @@ struct EsbuildObjectRestBuiltinAliases {
     get_own_property_symbols: HashSet<BindingKey>,
     has_own_property: HashSet<BindingKey>,
     property_is_enumerable: HashSet<BindingKey>,
+    /// Bindings with a direct write anywhere in the module, collected only
+    /// once an alias was found. Neither the aliases above nor a helper built
+    /// on them may be one of these.
+    written: HashSet<BindingKey>,
 }
 
 impl EsbuildObjectRestBuiltinAliases {
@@ -1405,27 +1411,34 @@ fn collect_esbuild_object_rest_builtin_aliases(
 ) -> EsbuildObjectRestBuiltinAliases {
     let mut aliases = EsbuildObjectRestBuiltinAliases::default();
 
-    for var in top_level_var_decls(module) {
-        for decl in &var.decls {
-            let Some(key) = var_declarator_binding_key(decl) else {
-                continue;
-            };
-            let Some(init) = decl.init.as_deref() else {
-                continue;
-            };
-            match object_rest_builtin_alias_kind(init, unresolved_mark) {
-                Some("getOwnPropertySymbols") => {
-                    aliases.get_own_property_symbols.insert(key);
-                }
-                Some("hasOwnProperty") => {
-                    aliases.has_own_property.insert(key);
-                }
-                Some("propertyIsEnumerable") => {
-                    aliases.property_is_enumerable.insert(key);
-                }
-                _ => {}
+    for_each_initialized_declarator(module, |binding, init, _| {
+        let key = binding_key(binding);
+        match object_rest_builtin_alias_kind(init, unresolved_mark) {
+            Some("getOwnPropertySymbols") => {
+                aliases.get_own_property_symbols.insert(key);
             }
+            Some("hasOwnProperty") => {
+                aliases.has_own_property.insert(key);
+            }
+            Some("propertyIsEnumerable") => {
+                aliases.property_is_enumerable.insert(key);
+            }
+            _ => {}
         }
+    });
+
+    // An alias or helper that is written after its declaration may hold
+    // something else at a call. Only collected once an alias shows up.
+    if aliases.dependency_keys().next().is_some() {
+        let written = BindingUseIndex::collect_direct_write_bindings(module);
+        for set in [
+            &mut aliases.get_own_property_symbols,
+            &mut aliases.has_own_property,
+            &mut aliases.property_is_enumerable,
+        ] {
+            set.retain(|key| !written.contains(key));
+        }
+        aliases.written = written;
     }
 
     aliases
@@ -1481,19 +1494,12 @@ fn collect_mangled_esbuild_object_rest_helpers(
     }
 
     let mut helpers = HashMap::default();
-    for var in top_level_var_decls(module) {
-        for decl in &var.decls {
-            let Some(key) = var_declarator_binding_key(decl) else {
-                continue;
-            };
-            let Some(init) = decl.init.as_deref() else {
-                continue;
-            };
-            if esbuild_object_rest_helper_matches(init, aliases) {
-                helpers.insert(key, TranspilerHelperKind::ObjectWithoutProperties);
-            }
+    for_each_initialized_declarator(module, |binding, init, _| {
+        let key = binding_key(binding);
+        if !aliases.written.contains(&key) && esbuild_object_rest_helper_matches(init, aliases) {
+            helpers.insert(key, TranspilerHelperKind::ObjectWithoutProperties);
         }
-    }
+    });
     helpers
 }
 
@@ -1681,13 +1687,7 @@ fn remove_unused_esbuild_object_rest_builtin_aliases(
     aliases: &EsbuildObjectRestBuiltinAliases,
 ) {
     let candidates: HashSet<_> = aliases.dependency_keys().collect();
-    if candidates.is_empty() {
-        return;
-    }
-    let removable = removable_without_remaining_refs(module, &candidates);
-    if !removable.is_empty() {
-        remove_var_declarators_by_binding(&mut module.body, &removable);
-    }
+    remove_unused_helper_declarations(module, &candidates);
 }
 
 struct ObjectRestProcessor<'a> {

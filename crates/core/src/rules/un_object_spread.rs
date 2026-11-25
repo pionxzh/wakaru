@@ -17,13 +17,13 @@ use super::cross_module_helper_refs::{
     cross_module_member_helper_kind, cross_module_ts_member_helper,
 };
 use super::helper_matcher::{
-    binding_key, member_prop_name, removable_without_remaining_refs, remove_fn_decls_by_binding,
-    remove_var_declarators_by_binding, static_member_prop_name, top_level_var_decls,
-    var_declarator_binding_key, NumericRequireNamespaces,
+    binding_key, for_each_initialized_declarator, member_prop_name,
+    remove_unused_helper_declarations, static_member_prop_name, NumericRequireNamespaces,
 };
 use super::transpiler_helper_utils::{
     remove_unused_helper_imports, BindingKey, LocalHelperContext, TranspilerHelperKind,
 };
+use crate::analysis::binding_uses::BindingUseIndex;
 
 use crate::utils::paren::strip_parens;
 
@@ -238,7 +238,7 @@ fn run_un_object_spread(
     );
     helper_dependency_cleanup_candidates.extend(esbuild_define_normal_prop_helpers.iter().cloned());
     local_helper_context.remove_helpers_with_dependencies(module, local_root_helpers);
-    remove_unused_helper_dependency_decls(module, &helper_dependency_cleanup_candidates);
+    remove_unused_helper_declarations(module, &helper_dependency_cleanup_candidates);
     // The collected alias sets cover any unused Object alias in the module, so
     // only sweep them when esbuild helper machinery was actually recognized;
     // a recovered Babel/SWC helper alone says nothing about stray aliases.
@@ -302,6 +302,10 @@ struct EsbuildObjectBuiltinAliases {
     get_own_property_symbols: HashSet<BindingKey>,
     has_own_property: HashSet<BindingKey>,
     property_is_enumerable: HashSet<BindingKey>,
+    /// Bindings with a direct write anywhere in the module, collected only
+    /// once an alias was found. Neither the aliases above nor a helper built
+    /// on them may be one of these.
+    written: HashSet<BindingKey>,
 }
 
 impl EsbuildObjectBuiltinAliases {
@@ -333,25 +337,7 @@ fn remove_unused_esbuild_object_builtin_aliases(
     aliases: &EsbuildObjectBuiltinAliases,
 ) {
     let candidates: HashSet<_> = aliases.dependency_keys().collect();
-    if candidates.is_empty() {
-        return;
-    }
-    let removable = removable_without_remaining_refs(module, &candidates);
-    if !removable.is_empty() {
-        remove_var_declarators_by_binding(&mut module.body, &removable);
-    }
-}
-
-fn remove_unused_helper_dependency_decls(module: &mut Module, candidates: &HashSet<BindingKey>) {
-    if candidates.is_empty() {
-        return;
-    }
-    let removable = removable_without_remaining_refs(module, candidates);
-    if removable.is_empty() {
-        return;
-    }
-    remove_fn_decls_by_binding(module, &removable);
-    remove_var_declarators_by_binding(&mut module.body, &removable);
+    remove_unused_helper_declarations(module, &candidates);
 }
 
 /// The esbuild `__spreadValues` / `__spreadProps` helpers `module` declares,
@@ -385,28 +371,20 @@ fn collect_mangled_esbuild_object_spread_helpers(
     }
 
     let mut helpers = HashMap::default();
-    for var in top_level_var_decls(module) {
-        for decl in &var.decls {
-            let Some(key) = var_declarator_binding_key(decl) else {
-                continue;
-            };
-            let Some(init) = decl.init.as_deref() else {
-                continue;
-            };
-            if (aliases.has_spread_values_signals()
-                && !define_normal_prop_helpers.is_empty()
-                && esbuild_spread_values_helper_matches(init, define_normal_prop_helpers, aliases))
-                || (aliases.has_spread_props_signals()
-                    && esbuild_spread_props_helper_matches(
-                        init,
-                        aliases,
-                        define_normal_prop_helpers,
-                    ))
-            {
-                helpers.insert(key, TranspilerHelperKind::ObjectSpread);
-            }
+    for_each_initialized_declarator(module, |binding, init, _| {
+        let key = binding_key(binding);
+        if aliases.written.contains(&key) {
+            return;
         }
-    }
+        if (aliases.has_spread_values_signals()
+            && !define_normal_prop_helpers.is_empty()
+            && esbuild_spread_values_helper_matches(init, define_normal_prop_helpers, aliases))
+            || (aliases.has_spread_props_signals()
+                && esbuild_spread_props_helper_matches(init, aliases, define_normal_prop_helpers))
+        {
+            helpers.insert(key, TranspilerHelperKind::ObjectSpread);
+        }
+    });
 
     if helpers.is_empty() {
         return helpers;
@@ -432,36 +410,46 @@ fn collect_esbuild_object_builtin_aliases(
 ) -> EsbuildObjectBuiltinAliases {
     let mut aliases = EsbuildObjectBuiltinAliases::default();
 
-    for var in top_level_var_decls(module) {
-        for decl in &var.decls {
-            let Some(key) = var_declarator_binding_key(decl) else {
-                continue;
-            };
-            let Some(init) = decl.init.as_deref() else {
-                continue;
-            };
-            match object_builtin_alias_kind(init, unresolved_mark) {
-                Some("defineProperty") => {
-                    aliases.define_property.insert(key);
-                }
-                Some("defineProperties") => {
-                    aliases.define_properties.insert(key);
-                }
-                Some("getOwnPropertyDescriptors") => {
-                    aliases.get_own_property_descriptors.insert(key);
-                }
-                Some("getOwnPropertySymbols") => {
-                    aliases.get_own_property_symbols.insert(key);
-                }
-                Some("hasOwnProperty") => {
-                    aliases.has_own_property.insert(key);
-                }
-                Some("propertyIsEnumerable") => {
-                    aliases.property_is_enumerable.insert(key);
-                }
-                _ => {}
+    for_each_initialized_declarator(module, |binding, init, _| {
+        let key = binding_key(binding);
+        match object_builtin_alias_kind(init, unresolved_mark) {
+            Some("defineProperty") => {
+                aliases.define_property.insert(key);
             }
+            Some("defineProperties") => {
+                aliases.define_properties.insert(key);
+            }
+            Some("getOwnPropertyDescriptors") => {
+                aliases.get_own_property_descriptors.insert(key);
+            }
+            Some("getOwnPropertySymbols") => {
+                aliases.get_own_property_symbols.insert(key);
+            }
+            Some("hasOwnProperty") => {
+                aliases.has_own_property.insert(key);
+            }
+            Some("propertyIsEnumerable") => {
+                aliases.property_is_enumerable.insert(key);
+            }
+            _ => {}
         }
+    });
+
+    // An alias or helper that is written after its declaration may hold
+    // something else at a call. Only collected once an alias shows up.
+    if aliases.dependency_keys().next().is_some() {
+        let written = BindingUseIndex::collect_direct_write_bindings(module);
+        for set in [
+            &mut aliases.define_property,
+            &mut aliases.define_properties,
+            &mut aliases.get_own_property_descriptors,
+            &mut aliases.get_own_property_symbols,
+            &mut aliases.has_own_property,
+            &mut aliases.property_is_enumerable,
+        ] {
+            set.retain(|key| !written.contains(key));
+        }
+        aliases.written = written;
     }
 
     aliases
@@ -507,19 +495,14 @@ fn collect_esbuild_define_normal_prop_helpers(
     aliases: &EsbuildObjectBuiltinAliases,
 ) -> HashSet<BindingKey> {
     let mut helpers = HashSet::default();
-    for var in top_level_var_decls(module) {
-        for decl in &var.decls {
-            let Some(key) = var_declarator_binding_key(decl) else {
-                continue;
-            };
-            let Some(init) = decl.init.as_deref() else {
-                continue;
-            };
-            if esbuild_define_normal_prop_helper_matches(init, aliases) {
-                helpers.insert(key);
-            }
+    for_each_initialized_declarator(module, |binding, init, _| {
+        let key = binding_key(binding);
+        if !aliases.written.contains(&key)
+            && esbuild_define_normal_prop_helper_matches(init, aliases)
+        {
+            helpers.insert(key);
         }
-    }
+    });
     helpers
 }
 

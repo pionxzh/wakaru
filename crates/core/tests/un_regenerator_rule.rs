@@ -1487,6 +1487,145 @@ async function load_user(app_id) {
     assert_eq_normalized(&output, expected);
 }
 
+// esbuild's IIFE format keeps the runtime helpers and every scope-hoisted
+// module in the IIFE's function body; `__async` is matched there too.
+// producer esbuild@0.25 --bundle --format=iife --target=es2016
+#[test]
+fn esbuild_async_helper_inside_an_iife() {
+    let input = r#"
+var lib = (() => {
+  var __async = (__this, __arguments, generator) => {
+    return new Promise((resolve, reject) => {
+      var fulfilled = (value) => { try { step(generator.next(value)); } catch (e) { reject(e); } };
+      var rejected = (value) => { try { step(generator.throw(value)); } catch (e) { reject(e); } };
+      var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
+      step((generator = generator.apply(__this, __arguments)).next());
+    });
+  };
+  function load(value) {
+    return __async(this, null, function* () {
+      const settled = yield value;
+      return [settled, 1];
+    });
+  }
+  return { load };
+})();
+"#;
+    let expected = r#"
+const lib = (() => {
+  async function load(value) {
+    const settled = await value;
+    return [settled, 1];
+  }
+  return { load };
+})();
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn minified_esbuild_async_helper_inside_an_iife() {
+    // producer esbuild@0.25 --bundle --format=iife --target=es2016 --minify
+    let input = r#"
+var lib=(()=>{var m=(t,e,o)=>new Promise((r,n)=>{var y=c=>{try{s(o.next(c))}catch(a){n(a)}},b=c=>{try{s(o.throw(c))}catch(a){n(a)}},s=c=>c.done?r(c.value):Promise.resolve(c.value).then(y,b);s((o=o.apply(t,e)).next())});function w(t){return m(this,null,function*(){return[yield t,1]})}return{load:w}})();
+"#;
+    let expected = r#"
+const lib = (() => {
+  async function load(t) {
+    return [await t, 1];
+  }
+  return { load };
+})();
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+const IIFE_ASYNC_HELPER: &str = r#"
+  var __async = (__this, __arguments, generator) => new Promise((resolve) => {
+    step((generator = generator.apply(__this, __arguments)).next());
+  });
+"#;
+
+#[test]
+fn iife_async_helper_shadowed_in_an_inner_scope_keeps_that_call() {
+    // `keep`'s parameter spells `__async` but is its own binding: its call is
+    // not the helper's and stays a call.
+    let input = format!(
+        r#"
+var lib = (() => {{
+{IIFE_ASYNC_HELPER}
+  function keep(__async, value) {{
+    return __async(this, null, function* () {{
+      return yield value;
+    }});
+  }}
+  function load(value) {{
+    return __async(this, null, function* () {{
+      return yield value;
+    }});
+  }}
+  return [keep, load];
+}})();
+"#
+    );
+    let expected = r#"
+var lib = (() => {
+  function keep(__async, value) {
+    return __async(this, null, function* () {
+      return yield value;
+    });
+  }
+  async function load(value) {
+    return await value;
+  }
+  return [keep, load];
+})();
+"#;
+    assert_eq_normalized(&apply(&input), expected);
+}
+
+#[test]
+fn iife_async_helper_that_is_reassigned_is_not_a_helper() {
+    let input = format!(
+        r#"
+var lib = (() => {{
+{IIFE_ASYNC_HELPER}
+  function swap(next) {{
+    __async = next;
+  }}
+  function load(value) {{
+    return __async(this, null, function* () {{
+      return yield value;
+    }});
+  }}
+  return [swap, load];
+}})();
+"#
+    );
+    assert_eq_normalized(&apply(&input), &input);
+}
+
+#[test]
+fn iife_promise_function_that_does_not_step_its_own_generator_is_not_async_helper() {
+    // At the module top level a short-named function with `new Promise` and an
+    // `.apply` call is taken as `__async`; in a nested scope the body must
+    // apply its own third parameter to the first two.
+    let input = r#"
+var lib = (() => {
+  var r = (t, e, o) => new Promise((done) => {
+    done(other.apply(t, e), o);
+  });
+  function load(value) {
+    return r(this, null, function* () {
+      return yield value;
+    });
+  }
+  return load;
+})();
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
 #[test]
 fn esbuild_mangled_async_helper_recovers_loop_try_catch() {
     let input = r#"
