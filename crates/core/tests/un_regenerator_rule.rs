@@ -5400,3 +5400,862 @@ function* spill(a, b) {
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+// ── Await-spill temps inside loops ───────────────────────────────────────────
+
+/// Recovered form of the `await_spill_in_loop_*` inputs below (one source,
+/// two Babel versions).
+const AWAIT_SPILL_IN_LOOP_EXPECTED: &str = r#"
+export async function collect(items) {
+  let _iterator;
+  let _step;
+  let item;
+  const out = [];
+  _iterator = _createForOfIteratorHelper(items);
+  try {
+    _iterator.s();
+    for (; !(_step = _iterator.n()).done;) {
+      item = _step.value;
+      out.push(item, await load(item));
+    }
+  } catch (error) {
+    _iterator.e(error);
+  } finally {
+    _iterator.f();
+  }
+  return out;
+}
+export async function indexed(items, out) {
+  let i = 0;
+  for (; i < items.length; i++) {
+    out.push(i, await load(items[i]));
+  }
+}
+export async function drain(items, out) {
+  let i = 0;
+  for (; i < items.length; i++) {
+    out.push(i, await load(items[i]));
+  }
+}
+export async function notLast(items, out) {
+  let _iterator2;
+  let _step2;
+  let item;
+  _iterator2 = _createForOfIteratorHelper(items);
+  try {
+    _iterator2.s();
+    for (; !(_step2 = _iterator2.n()).done;) {
+      item = _step2.value;
+      out.push(item, await load(item));
+      log(item);
+    }
+  } catch (error) {
+    _iterator2.e(error);
+  } finally {
+    _iterator2.f();
+  }
+}
+"#;
+
+#[test]
+fn await_spill_in_loop_legacy() {
+    // Loops whose body holds a spill consumer. Regenerator gives a `for`
+    // loop without update (a lowered `for…of`) an empty update label before
+    // the back-edge; the consumer stays in the body next to its spill
+    // writes instead of becoming the loop update, and folds there.
+    // producer babel@7.23 preset-env (ie 11)
+    let input = r#"
+function asyncGeneratorStep(gen, resolve, reject, _next, _throw, key, arg) { try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; } if (info.done) { resolve(value); } else { Promise.resolve(value).then(_next, _throw); } }
+function _asyncToGenerator(fn) { return function () { var self = this, args = arguments; return new Promise(function (resolve, reject) { var gen = fn.apply(self, args); function _next(value) { asyncGeneratorStep(gen, resolve, reject, _next, _throw, "next", value); } function _throw(err) { asyncGeneratorStep(gen, resolve, reject, _next, _throw, "throw", err); } _next(undefined); }); }; }
+export function collect(_x) {
+  return _collect.apply(this, arguments);
+}
+function _collect() {
+  _collect = _asyncToGenerator(/*#__PURE__*/_regeneratorRuntime().mark(function _callee(items) {
+    var out, _iterator, _step, item;
+    return _regeneratorRuntime().wrap(function _callee$(_context) {
+      while (1) switch (_context.prev = _context.next) {
+        case 0:
+          out = [];
+          _iterator = _createForOfIteratorHelper(items);
+          _context.prev = 2;
+          _iterator.s();
+        case 4:
+          if ((_step = _iterator.n()).done) {
+            _context.next = 14;
+            break;
+          }
+          item = _step.value;
+          _context.t0 = out;
+          _context.t1 = item;
+          _context.next = 10;
+          return load(item);
+        case 10:
+          _context.t2 = _context.sent;
+          _context.t0.push.call(_context.t0, _context.t1, _context.t2);
+        case 12:
+          _context.next = 4;
+          break;
+        case 14:
+          _context.next = 19;
+          break;
+        case 16:
+          _context.prev = 16;
+          _context.t3 = _context["catch"](2);
+          _iterator.e(_context.t3);
+        case 19:
+          _context.prev = 19;
+          _iterator.f();
+          return _context.finish(19);
+        case 22:
+          return _context.abrupt("return", out);
+        case 23:
+        case "end":
+          return _context.stop();
+      }
+    }, _callee, null, [[2, 16, 19, 22]]);
+  }));
+  return _collect.apply(this, arguments);
+}
+export function indexed(_x2, _x3) {
+  return _indexed.apply(this, arguments);
+}
+function _indexed() {
+  _indexed = _asyncToGenerator(/*#__PURE__*/_regeneratorRuntime().mark(function _callee2(items, out) {
+    var i;
+    return _regeneratorRuntime().wrap(function _callee2$(_context2) {
+      while (1) switch (_context2.prev = _context2.next) {
+        case 0:
+          i = 0;
+        case 1:
+          if (!(i < items.length)) {
+            _context2.next = 11;
+            break;
+          }
+          _context2.t0 = out;
+          _context2.t1 = i;
+          _context2.next = 6;
+          return load(items[i]);
+        case 6:
+          _context2.t2 = _context2.sent;
+          _context2.t0.push.call(_context2.t0, _context2.t1, _context2.t2);
+        case 8:
+          i++;
+          _context2.next = 1;
+          break;
+        case 11:
+        case "end":
+          return _context2.stop();
+      }
+    }, _callee2);
+  }));
+  return _indexed.apply(this, arguments);
+}
+export function drain(_x4, _x5) {
+  return _drain.apply(this, arguments);
+}
+function _drain() {
+  _drain = _asyncToGenerator(/*#__PURE__*/_regeneratorRuntime().mark(function _callee3(items, out) {
+    var i;
+    return _regeneratorRuntime().wrap(function _callee3$(_context3) {
+      while (1) switch (_context3.prev = _context3.next) {
+        case 0:
+          i = 0;
+        case 1:
+          if (!(i < items.length)) {
+            _context3.next = 11;
+            break;
+          }
+          _context3.t0 = out;
+          _context3.t1 = i;
+          _context3.next = 6;
+          return load(items[i]);
+        case 6:
+          _context3.t2 = _context3.sent;
+          _context3.t0.push.call(_context3.t0, _context3.t1, _context3.t2);
+          i++;
+          _context3.next = 1;
+          break;
+        case 11:
+        case "end":
+          return _context3.stop();
+      }
+    }, _callee3);
+  }));
+  return _drain.apply(this, arguments);
+}
+export function notLast(_x6, _x7) {
+  return _notLast.apply(this, arguments);
+}
+function _notLast() {
+  _notLast = _asyncToGenerator(/*#__PURE__*/_regeneratorRuntime().mark(function _callee4(items, out) {
+    var _iterator2, _step2, item;
+    return _regeneratorRuntime().wrap(function _callee4$(_context4) {
+      while (1) switch (_context4.prev = _context4.next) {
+        case 0:
+          _iterator2 = _createForOfIteratorHelper(items);
+          _context4.prev = 1;
+          _iterator2.s();
+        case 3:
+          if ((_step2 = _iterator2.n()).done) {
+            _context4.next = 14;
+            break;
+          }
+          item = _step2.value;
+          _context4.t0 = out;
+          _context4.t1 = item;
+          _context4.next = 9;
+          return load(item);
+        case 9:
+          _context4.t2 = _context4.sent;
+          _context4.t0.push.call(_context4.t0, _context4.t1, _context4.t2);
+          log(item);
+        case 12:
+          _context4.next = 3;
+          break;
+        case 14:
+          _context4.next = 19;
+          break;
+        case 16:
+          _context4.prev = 16;
+          _context4.t3 = _context4["catch"](1);
+          _iterator2.e(_context4.t3);
+        case 19:
+          _context4.prev = 19;
+          _iterator2.f();
+          return _context4.finish(19);
+        case 22:
+        case "end":
+          return _context4.stop();
+      }
+    }, _callee4, null, [[1, 16, 19, 22]]);
+  }));
+  return _notLast.apply(this, arguments);
+}
+"#;
+    assert_eq_normalized(&render(input), AWAIT_SPILL_IN_LOOP_EXPECTED);
+}
+
+#[test]
+fn await_spill_in_loop_compact() {
+    // producer babel@7.29 preset-env (ie 11)
+    let input = r#"
+function asyncGeneratorStep(n, t, e, r, o, a, c) { try { var i = n[a](c), u = i.value; } catch (n) { return void e(n); } i.done ? t(u) : Promise.resolve(u).then(r, o); }
+function _asyncToGenerator(n) { return function () { var t = this, e = arguments; return new Promise(function (r, o) { var a = n.apply(t, e); function _next(n) { asyncGeneratorStep(a, r, o, _next, _throw, "next", n); } function _throw(n) { asyncGeneratorStep(a, r, o, _next, _throw, "throw", n); } _next(void 0); }); }; }
+export function collect(_x) {
+  return _collect.apply(this, arguments);
+}
+function _collect() {
+  _collect = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee(items) {
+    var out, _iterator, _step, item, _t, _t2, _t3;
+    return _regenerator().w(function (_context) {
+      while (1) switch (_context.p = _context.n) {
+        case 0:
+          out = [];
+          _iterator = _createForOfIteratorHelper(items);
+          _context.p = 1;
+          _iterator.s();
+        case 2:
+          if ((_step = _iterator.n()).done) {
+            _context.n = 5;
+            break;
+          }
+          item = _step.value;
+          _t = out;
+          _t2 = item;
+          _context.n = 3;
+          return load(item);
+        case 3:
+          _t.push.call(_t, _t2, _context.v);
+        case 4:
+          _context.n = 2;
+          break;
+        case 5:
+          _context.n = 7;
+          break;
+        case 6:
+          _context.p = 6;
+          _t3 = _context.v;
+          _iterator.e(_t3);
+        case 7:
+          _context.p = 7;
+          _iterator.f();
+          return _context.f(7);
+        case 8:
+          return _context.a(2, out);
+      }
+    }, _callee, null, [[1, 6, 7, 8]]);
+  }));
+  return _collect.apply(this, arguments);
+}
+export function indexed(_x2, _x3) {
+  return _indexed.apply(this, arguments);
+}
+function _indexed() {
+  _indexed = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee2(items, out) {
+    var i, _t4, _t5;
+    return _regenerator().w(function (_context2) {
+      while (1) switch (_context2.n) {
+        case 0:
+          i = 0;
+        case 1:
+          if (!(i < items.length)) {
+            _context2.n = 4;
+            break;
+          }
+          _t4 = out;
+          _t5 = i;
+          _context2.n = 2;
+          return load(items[i]);
+        case 2:
+          _t4.push.call(_t4, _t5, _context2.v);
+        case 3:
+          i++;
+          _context2.n = 1;
+          break;
+        case 4:
+          return _context2.a(2);
+      }
+    }, _callee2);
+  }));
+  return _indexed.apply(this, arguments);
+}
+export function drain(_x4, _x5) {
+  return _drain.apply(this, arguments);
+}
+function _drain() {
+  _drain = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee3(items, out) {
+    var i, _t6, _t7;
+    return _regenerator().w(function (_context3) {
+      while (1) switch (_context3.n) {
+        case 0:
+          i = 0;
+        case 1:
+          if (!(i < items.length)) {
+            _context3.n = 3;
+            break;
+          }
+          _t6 = out;
+          _t7 = i;
+          _context3.n = 2;
+          return load(items[i]);
+        case 2:
+          _t6.push.call(_t6, _t7, _context3.v);
+          i++;
+          _context3.n = 1;
+          break;
+        case 3:
+          return _context3.a(2);
+      }
+    }, _callee3);
+  }));
+  return _drain.apply(this, arguments);
+}
+export function notLast(_x6, _x7) {
+  return _notLast.apply(this, arguments);
+}
+function _notLast() {
+  _notLast = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee4(items, out) {
+    var _iterator2, _step2, item, _t8, _t9, _t0;
+    return _regenerator().w(function (_context4) {
+      while (1) switch (_context4.p = _context4.n) {
+        case 0:
+          _iterator2 = _createForOfIteratorHelper(items);
+          _context4.p = 1;
+          _iterator2.s();
+        case 2:
+          if ((_step2 = _iterator2.n()).done) {
+            _context4.n = 5;
+            break;
+          }
+          item = _step2.value;
+          _t8 = out;
+          _t9 = item;
+          _context4.n = 3;
+          return load(item);
+        case 3:
+          _t8.push.call(_t8, _t9, _context4.v);
+          log(item);
+        case 4:
+          _context4.n = 2;
+          break;
+        case 5:
+          _context4.n = 7;
+          break;
+        case 6:
+          _context4.p = 6;
+          _t0 = _context4.v;
+          _iterator2.e(_t0);
+        case 7:
+          _context4.p = 7;
+          _iterator2.f();
+          return _context4.f(7);
+        case 8:
+          return _context4.a(2);
+      }
+    }, _callee4, null, [[1, 6, 7, 8]]);
+  }));
+  return _notLast.apply(this, arguments);
+}
+"#;
+    assert_eq_normalized(&render(input), AWAIT_SPILL_IN_LOOP_EXPECTED);
+}
+
+/// Recovered form of the `loop_continue_*` inputs below (one source, two
+/// Babel versions).
+const LOOP_CONTINUE_EXPECTED: &str = r#"
+export async function skipFirst(items, out) {
+  let _iterator;
+  let _step;
+  let item;
+  _iterator = _createForOfIteratorHelper(items);
+  try {
+    _iterator.s();
+    for (; !(_step = _iterator.n()).done;) {
+      item = _step.value;
+      if (!item) continue;
+      out.push(item, await load(item));
+    }
+  } catch (error) {
+    _iterator.e(error);
+  } finally {
+    _iterator.f();
+  }
+}
+export async function skipTail(items, out) {
+  let _iterator2;
+  let _step2;
+  let item;
+  _iterator2 = _createForOfIteratorHelper(items);
+  try {
+    _iterator2.s();
+    for (; !(_step2 = _iterator2.n()).done;) {
+      item = _step2.value;
+      out.push(item, await load(item));
+      if (!item) continue;
+      log(item);
+    }
+  } catch (error) {
+    _iterator2.e(error);
+  } finally {
+    _iterator2.f();
+  }
+}
+export async function skipWhile(items) {
+  let i = 0;
+  for (; i < items.length;) {
+    i++;
+    if (!items[i - 1]) continue;
+    await load(i);
+    log(i);
+  }
+}
+"#;
+
+#[test]
+fn loop_continue_does_not_run_the_body_tail_legacy() {
+    // A `continue` jumps to the empty update label of a lowered `for…of`, or
+    // to the head of a `while`: it runs no statement of the body. The body's
+    // last statement (`log(item)`, `log(i)`) must stay in the body; as the
+    // `for` update, every `continue` would run it.
+    // producer babel@7.23 preset-env (ie 11)
+    let input = r#"
+function asyncGeneratorStep(gen, resolve, reject, _next, _throw, key, arg) { try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; } if (info.done) { resolve(value); } else { Promise.resolve(value).then(_next, _throw); } }
+function _asyncToGenerator(fn) { return function () { var self = this, args = arguments; return new Promise(function (resolve, reject) { var gen = fn.apply(self, args); function _next(value) { asyncGeneratorStep(gen, resolve, reject, _next, _throw, "next", value); } function _throw(err) { asyncGeneratorStep(gen, resolve, reject, _next, _throw, "throw", err); } _next(undefined); }); }; }
+export function skipFirst(_x, _x2) {
+  return _skipFirst.apply(this, arguments);
+}
+function _skipFirst() {
+  _skipFirst = _asyncToGenerator(/*#__PURE__*/_regeneratorRuntime().mark(function _callee(items, out) {
+    var _iterator, _step, item;
+    return _regeneratorRuntime().wrap(function _callee$(_context) {
+      while (1) switch (_context.prev = _context.next) {
+        case 0:
+          _iterator = _createForOfIteratorHelper(items);
+          _context.prev = 1;
+          _iterator.s();
+        case 3:
+          if ((_step = _iterator.n()).done) {
+            _context.next = 15;
+            break;
+          }
+          item = _step.value;
+          if (item) {
+            _context.next = 7;
+            break;
+          }
+          return _context.abrupt("continue", 13);
+        case 7:
+          _context.t0 = out;
+          _context.t1 = item;
+          _context.next = 11;
+          return load(item);
+        case 11:
+          _context.t2 = _context.sent;
+          _context.t0.push.call(_context.t0, _context.t1, _context.t2);
+        case 13:
+          _context.next = 3;
+          break;
+        case 15:
+          _context.next = 20;
+          break;
+        case 17:
+          _context.prev = 17;
+          _context.t3 = _context["catch"](1);
+          _iterator.e(_context.t3);
+        case 20:
+          _context.prev = 20;
+          _iterator.f();
+          return _context.finish(20);
+        case 23:
+        case "end":
+          return _context.stop();
+      }
+    }, _callee, null, [[1, 17, 20, 23]]);
+  }));
+  return _skipFirst.apply(this, arguments);
+}
+export function skipTail(_x3, _x4) {
+  return _skipTail.apply(this, arguments);
+}
+function _skipTail() {
+  _skipTail = _asyncToGenerator(/*#__PURE__*/_regeneratorRuntime().mark(function _callee2(items, out) {
+    var _iterator2, _step2, item;
+    return _regeneratorRuntime().wrap(function _callee2$(_context2) {
+      while (1) switch (_context2.prev = _context2.next) {
+        case 0:
+          _iterator2 = _createForOfIteratorHelper(items);
+          _context2.prev = 1;
+          _iterator2.s();
+        case 3:
+          if ((_step2 = _iterator2.n()).done) {
+            _context2.next = 16;
+            break;
+          }
+          item = _step2.value;
+          _context2.t0 = out;
+          _context2.t1 = item;
+          _context2.next = 9;
+          return load(item);
+        case 9:
+          _context2.t2 = _context2.sent;
+          _context2.t0.push.call(_context2.t0, _context2.t1, _context2.t2);
+          if (item) {
+            _context2.next = 13;
+            break;
+          }
+          return _context2.abrupt("continue", 14);
+        case 13:
+          log(item);
+        case 14:
+          _context2.next = 3;
+          break;
+        case 16:
+          _context2.next = 21;
+          break;
+        case 18:
+          _context2.prev = 18;
+          _context2.t3 = _context2["catch"](1);
+          _iterator2.e(_context2.t3);
+        case 21:
+          _context2.prev = 21;
+          _iterator2.f();
+          return _context2.finish(21);
+        case 24:
+        case "end":
+          return _context2.stop();
+      }
+    }, _callee2, null, [[1, 18, 21, 24]]);
+  }));
+  return _skipTail.apply(this, arguments);
+}
+export function skipWhile(_x5) {
+  return _skipWhile.apply(this, arguments);
+}
+function _skipWhile() {
+  _skipWhile = _asyncToGenerator(/*#__PURE__*/_regeneratorRuntime().mark(function _callee3(items) {
+    var i;
+    return _regeneratorRuntime().wrap(function _callee3$(_context3) {
+      while (1) switch (_context3.prev = _context3.next) {
+        case 0:
+          i = 0;
+        case 1:
+          if (!(i < items.length)) {
+            _context3.next = 10;
+            break;
+          }
+          i++;
+          if (items[i - 1]) {
+            _context3.next = 5;
+            break;
+          }
+          return _context3.abrupt("continue", 1);
+        case 5:
+          _context3.next = 7;
+          return load(i);
+        case 7:
+          log(i);
+          _context3.next = 1;
+          break;
+        case 10:
+        case "end":
+          return _context3.stop();
+      }
+    }, _callee3);
+  }));
+  return _skipWhile.apply(this, arguments);
+}
+"#;
+    assert_eq_normalized(&render(input), LOOP_CONTINUE_EXPECTED);
+}
+
+#[test]
+fn loop_continue_does_not_run_the_body_tail_compact() {
+    // producer babel@7.29 preset-env (ie 11)
+    let input = r#"
+function asyncGeneratorStep(n, t, e, r, o, a, c) { try { var i = n[a](c), u = i.value; } catch (n) { return void e(n); } i.done ? t(u) : Promise.resolve(u).then(r, o); }
+function _asyncToGenerator(n) { return function () { var t = this, e = arguments; return new Promise(function (r, o) { var a = n.apply(t, e); function _next(n) { asyncGeneratorStep(a, r, o, _next, _throw, "next", n); } function _throw(n) { asyncGeneratorStep(a, r, o, _next, _throw, "throw", n); } _next(void 0); }); }; }
+export function skipFirst(_x, _x2) {
+  return _skipFirst.apply(this, arguments);
+}
+function _skipFirst() {
+  _skipFirst = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee(items, out) {
+    var _iterator, _step, item, _t, _t2, _t3;
+    return _regenerator().w(function (_context) {
+      while (1) switch (_context.p = _context.n) {
+        case 0:
+          _iterator = _createForOfIteratorHelper(items);
+          _context.p = 1;
+          _iterator.s();
+        case 2:
+          if ((_step = _iterator.n()).done) {
+            _context.n = 6;
+            break;
+          }
+          item = _step.value;
+          if (item) {
+            _context.n = 3;
+            break;
+          }
+          return _context.a(3, 5);
+        case 3:
+          _t = out;
+          _t2 = item;
+          _context.n = 4;
+          return load(item);
+        case 4:
+          _t.push.call(_t, _t2, _context.v);
+        case 5:
+          _context.n = 2;
+          break;
+        case 6:
+          _context.n = 8;
+          break;
+        case 7:
+          _context.p = 7;
+          _t3 = _context.v;
+          _iterator.e(_t3);
+        case 8:
+          _context.p = 8;
+          _iterator.f();
+          return _context.f(8);
+        case 9:
+          return _context.a(2);
+      }
+    }, _callee, null, [[1, 7, 8, 9]]);
+  }));
+  return _skipFirst.apply(this, arguments);
+}
+export function skipTail(_x3, _x4) {
+  return _skipTail.apply(this, arguments);
+}
+function _skipTail() {
+  _skipTail = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee2(items, out) {
+    var _iterator2, _step2, item, _t4, _t5, _t6;
+    return _regenerator().w(function (_context2) {
+      while (1) switch (_context2.p = _context2.n) {
+        case 0:
+          _iterator2 = _createForOfIteratorHelper(items);
+          _context2.p = 1;
+          _iterator2.s();
+        case 2:
+          if ((_step2 = _iterator2.n()).done) {
+            _context2.n = 6;
+            break;
+          }
+          item = _step2.value;
+          _t4 = out;
+          _t5 = item;
+          _context2.n = 3;
+          return load(item);
+        case 3:
+          _t4.push.call(_t4, _t5, _context2.v);
+          if (item) {
+            _context2.n = 4;
+            break;
+          }
+          return _context2.a(3, 5);
+        case 4:
+          log(item);
+        case 5:
+          _context2.n = 2;
+          break;
+        case 6:
+          _context2.n = 8;
+          break;
+        case 7:
+          _context2.p = 7;
+          _t6 = _context2.v;
+          _iterator2.e(_t6);
+        case 8:
+          _context2.p = 8;
+          _iterator2.f();
+          return _context2.f(8);
+        case 9:
+          return _context2.a(2);
+      }
+    }, _callee2, null, [[1, 7, 8, 9]]);
+  }));
+  return _skipTail.apply(this, arguments);
+}
+export function skipWhile(_x5) {
+  return _skipWhile.apply(this, arguments);
+}
+function _skipWhile() {
+  _skipWhile = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee3(items) {
+    var i;
+    return _regenerator().w(function (_context3) {
+      while (1) switch (_context3.n) {
+        case 0:
+          i = 0;
+        case 1:
+          if (!(i < items.length)) {
+            _context3.n = 4;
+            break;
+          }
+          i++;
+          if (items[i - 1]) {
+            _context3.n = 2;
+            break;
+          }
+          return _context3.a(3, 1);
+        case 2:
+          _context3.n = 3;
+          return load(i);
+        case 3:
+          log(i);
+          _context3.n = 1;
+          break;
+        case 4:
+          return _context3.a(2);
+      }
+    }, _callee3);
+  }));
+  return _skipWhile.apply(this, arguments);
+}
+"#;
+    assert_eq_normalized(&render(input), LOOP_CONTINUE_EXPECTED);
+}
+
+#[test]
+fn await_spill_fold_keeps_temps_across_a_continue() {
+    // A `continue` between the spill writes and the yield: the writes and the
+    // consumer are not adjacent, so nothing folds.
+    let input = r#"
+var _marked = _regeneratorRuntime().mark(spill);
+function spill(items, out) {
+  var i;
+  return _regeneratorRuntime().wrap(function spill$(_context) {
+    while (1) switch (_context.prev = _context.next) {
+      case 0:
+        i = 0;
+      case 1:
+        if (!(i < items.length)) {
+          _context.next = 12;
+          break;
+        }
+        _context.t0 = out;
+        _context.t1 = i;
+        if (!skip(i)) {
+          _context.next = 6;
+          break;
+        }
+        return _context.abrupt("continue", 9);
+      case 6:
+        _context.next = 8;
+        return items[i];
+      case 8:
+        _context.t2 = _context.sent;
+        _context.t0.push.call(_context.t0, _context.t1, _context.t2);
+      case 9:
+        i++;
+        _context.next = 1;
+        break;
+      case 12:
+      case "end":
+        return _context.stop();
+    }
+  }, _marked);
+}
+"#;
+    let expected = r#"
+function* spill(items, out) {
+  var i;
+  var t0, t1, t2;
+  i = 0;
+  for (; i < items.length; i++) {
+    t0 = out;
+    t1 = i;
+    if (skip(i)) continue;
+    t2 = yield items[i];
+    t0.push.call(t0, t1, t2);
+  }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn await_spill_fold_keeps_a_temp_read_in_the_loop_test() {
+    // `_t` is read by the loop test as well as by the consumer.
+    let input = r#"
+var _marked = _regenerator().m(spill);
+function spill(items, out) {
+  var i, _t, _t2;
+  return _regenerator().w(function (_context) {
+    while (1) switch (_context.n) {
+      case 0:
+        i = 0;
+      case 1:
+        if (!(i < items.length && _t !== out)) {
+          _context.n = 4;
+          break;
+        }
+        _t = out;
+        _t2 = i;
+        _context.n = 2;
+        return items[i];
+      case 2:
+        _t.push.call(_t, _t2, _context.v);
+      case 3:
+        _context.n = 1;
+        break;
+      case 4:
+        return _context.a(2);
+    }
+  }, _marked);
+}
+"#;
+    let expected = r#"
+function* spill(items, out) {
+  var i, _t, _t2;
+  i = 0;
+  for (; i < items.length && _t !== out;) {
+    _t = out;
+    _t2 = i;
+    _t.push.call(_t, _t2, (yield items[i]));
+  }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

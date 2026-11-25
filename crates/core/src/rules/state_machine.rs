@@ -705,11 +705,12 @@ fn recover_index_loops_labeled(
     min_loop_head: usize,
 ) -> Vec<(usize, Stmt)> {
     let plain: Vec<Stmt> = stmts.iter().map(|(_, stmt)| stmt.clone()).collect();
+    let labels: Vec<usize> = stmts.iter().map(|(label, _)| *label).collect();
     let mut result: Vec<(usize, Stmt)> = Vec::new();
     let mut index = 0usize;
 
     while index < stmts.len() {
-        let recovered = try_recover_index_loop(&plain[index..], continue_mode)
+        let recovered = try_recover_index_loop(&plain[index..], &labels[index..], continue_mode)
             .filter(|recovered| recovered.head.is_none_or(|head| head >= min_loop_head));
         let Some(recovered) = recovered else {
             if let Some(loop_stmt) =
@@ -792,7 +793,7 @@ struct RecoveredIndexLoop {
     test: Box<Expr>,
     /// The break guard as it stood in the machine, converted to `if (c) break;`.
     break_guard: Stmt,
-    update: Box<Expr>,
+    update: Option<Box<Expr>>,
     body: Vec<Stmt>,
     consumed: usize,
     /// The back-edge target label, when the loop ends in a jump.
@@ -813,7 +814,7 @@ impl RecoveredIndexLoop {
             span: DUMMY_SP,
             init: None,
             test,
-            update: Some(self.update),
+            update: self.update,
             body: Box::new(Stmt::Block(BlockStmt {
                 span: DUMMY_SP,
                 ctxt: Default::default(),
@@ -823,8 +824,10 @@ impl RecoveredIndexLoop {
     }
 }
 
+/// `labels[i]` is the state label `stmts[i]` came from.
 fn try_recover_index_loop(
     stmts: &[Stmt],
+    labels: &[usize],
     continue_mode: IndexLoopContinueMode,
 ) -> Option<RecoveredIndexLoop> {
     let (test, break_target) = loop_break_test(stmts.first()?)?;
@@ -833,20 +836,35 @@ fn try_recover_index_loop(
         return None;
     }
 
-    let update_idx = final_return_idx.checked_sub(1)?;
-    let update = expr_stmt_expr(&stmts[update_idx])?;
-    let mut body_stmts = stmts[1..update_idx].to_vec();
+    let head = return_jump_target(&stmts[final_return_idx]);
     let continue_target = continue_target_for_loop(
-        &body_stmts,
+        &stmts[1..final_return_idx],
         &stmts[final_return_idx],
         break_target,
         continue_mode,
     )?;
+    let update_idx = match head {
+        Some(head) => loop_update_start(
+            stmts,
+            labels,
+            final_return_idx,
+            head,
+            break_target,
+            continue_target,
+        )?,
+        // No back-edge: the statement before the exit is the update.
+        None => final_return_idx - 1,
+    };
+    let update = if update_idx == final_return_idx {
+        None
+    } else {
+        Some(expr_stmt_expr(&stmts[update_idx])?)
+    };
+    let mut body_stmts = stmts[1..update_idx].to_vec();
     convert_jump_returns(&mut body_stmts, break_target, continue_target)?;
     let mut break_guard = stmts[0].clone();
     convert_jump_return(&mut break_guard, break_target, continue_target)?;
 
-    let head = return_jump_target(&stmts[final_return_idx]);
     let consumed = if head.is_some() {
         final_return_idx + 1
     } else {
@@ -860,6 +878,51 @@ fn try_recover_index_loop(
         consumed,
         head,
     })
+}
+
+/// The index where the update of a loop ending in the back-edge at
+/// `back_edge_idx` starts; `back_edge_idx` itself means no update.
+///
+/// A recovered `continue` runs the `for` update before the test, so the update
+/// must be exactly what a jump to the continue target runs: the statements
+/// from that label up to the back-edge. A continue target at the loop head
+/// runs nothing, so that loop gets no update. Without a jump to the continue
+/// target, every iteration runs the body's tail and then the back-edge, and
+/// the update is taken only from the back-edge's own label: a tail statement
+/// in an earlier label stays in the body (regenerator emits an empty update
+/// label for a `for` loop without update, such as a lowered `for…of`).
+fn loop_update_start(
+    stmts: &[Stmt],
+    labels: &[usize],
+    back_edge_idx: usize,
+    head: usize,
+    break_target: usize,
+    continue_target: usize,
+) -> Option<usize> {
+    let mut targets = HashSet::default();
+    collect_jump_targets(&stmts[1..back_edge_idx], &mut targets);
+    targets.remove(&break_target);
+    let last = back_edge_idx - 1;
+    if !targets.contains(&continue_target) {
+        return Some(if labels[last] >= labels[back_edge_idx] {
+            last
+        } else {
+            back_edge_idx
+        });
+    }
+    if continue_target == head {
+        return Some(back_edge_idx);
+    }
+    // A target between the head and the break guard would rerun the head
+    // statements, which a `for` continue does not.
+    if continue_target <= labels[0] {
+        return None;
+    }
+    let start = (1..back_edge_idx)
+        .find(|&idx| labels[idx] >= continue_target)
+        .unwrap_or(back_edge_idx);
+    // A `for` update is one expression statement.
+    (start >= last).then_some(start)
 }
 
 fn continue_target_for_loop(
