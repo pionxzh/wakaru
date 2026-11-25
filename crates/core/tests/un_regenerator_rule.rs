@@ -2927,8 +2927,10 @@ function load_user() {
 "#;
 
     let output = apply_with_helper_facts(input);
+    // The wrap body is recovered by shape, so its inline mark goes with it;
+    // the async helper call stays because the shadowed require proves nothing.
     assert!(
-        output.contains("asyncHelper.default(runtime.default.mark"),
+        output.contains("asyncHelper.default(function* _callee"),
         "shadowed require must not enable cross-module async helper facts:\n{output}"
     );
     assert!(
@@ -6397,4 +6399,61 @@ function* spill(items, out) {
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn babel_inline_marked_generator_expression_drops_the_mark() {
+    // Babel 7.27+ marks an expression generator inline and names the function
+    // itself as the mark: `_regenerator().m(function f() { return
+    // _regenerator().w(…, f); })`. Recovering the body without the `.m(…)`
+    // left a native generator whose prototype `mark` rewired to the runtime's,
+    // so calling `next` threw.
+    let input = r#"
+export default _regenerator().m(function tally() {
+  return _regenerator().w(function(_context) {
+    while (1) switch (_context.n) {
+      case 0:
+        return _context.a(2, 7);
+    }
+  }, tally);
+});
+"#;
+    let expected = r#"
+export default (function* tally() {
+  return 7;
+});
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn babel_inline_marked_async_argument_drops_the_mark() {
+    let input = r#"
+function _asyncToGenerator(e) {
+  return function() {
+    var r = this, t = arguments;
+    return new Promise(function(n, o) {
+      var i = e.apply(r, t);
+      function a(e) {}
+      a(void 0);
+    });
+  }
+}
+schedule(_asyncToGenerator(_regenerator().m(function _callee() {
+  return _regenerator().w(function(_context) {
+    while (1) switch (_context.n) {
+      case 0:
+        _context.n = 1;
+        return ready();
+      case 1:
+        return _context.a(2);
+    }
+  }, _callee);
+})));
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains(".m(") && output.contains("function* _callee"),
+        "the inline mark must go with the recovered body:\n{output}"
+    );
 }

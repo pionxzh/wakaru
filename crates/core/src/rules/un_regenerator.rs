@@ -971,6 +971,11 @@ impl VisitMut for FunctionTransformer<'_> {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
+        if let Some(function) = take_marked_self_named_generator(expr, self.consumed_marks) {
+            *expr = function;
+            return;
+        }
+
         if let Expr::Call(call) = expr {
             // _asyncToGenerator(fn)() IIFE
             if call.args.is_empty() {
@@ -1050,6 +1055,41 @@ impl VisitMut for FunctionTransformer<'_> {
             yield_expr.arg = Some(arg);
         }
     }
+}
+
+/// `runtime.mark(function* f() {…})` (or `.m(…)`) whose function this pass
+/// just turned into a native generator: Babel's inline form
+/// `_regenerator().m(function f() { return _regenerator().w(…, f); })`,
+/// e.g. an `export default` generator expression or an `_asyncToGenerator`
+/// argument. The `.w(…, f)` named the function's own binding as its mark, so
+/// that binding is in `consumed_marks`. `mark` rewires the function's
+/// prototype chain to the runtime's generator prototype, whose `next` needs
+/// the runtime's `_invoke` slot that a native generator object lacks, so the
+/// wrapper has to go together with the body.
+fn take_marked_self_named_generator(expr: &Expr, consumed_marks: &[BindingKey]) -> Option<Expr> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    let Expr::Member(member) = call.callee.as_expr()?.as_ref() else {
+        return None;
+    };
+    if !is_mark_prop(&member.prop) {
+        return None;
+    }
+    let [arg] = call.args.as_slice() else {
+        return None;
+    };
+    if arg.spread.is_some() {
+        return None;
+    }
+    let Expr::Fn(fn_expr) = strip_parens(&arg.expr) else {
+        return None;
+    };
+    let ident = fn_expr.ident.as_ref()?;
+    if !fn_expr.function.is_generator || !consumed_marks.contains(&binding_key(ident)) {
+        return None;
+    }
+    Some(Expr::Fn(fn_expr.clone()))
 }
 
 // ============================================================
