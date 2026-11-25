@@ -1524,6 +1524,23 @@ fn make_optional_chain(base: Expr, access: &Expr, policy: RewritePolicy) -> Opti
                         })),
                     }));
                 }
+
+                // x.a.b(...) → x?.a.b(...): the guarded value sits deeper in
+                // the callee's member path. Rebuilding the callee as a member
+                // chain keeps `x.a` as the call's receiver, and the recursion
+                // only matches `base` at the path's root.
+                let replaced_callee = make_optional_chain(base, callee_expr, policy)?;
+                return Some(Expr::OptChain(OptChainExpr {
+                    span: DUMMY_SP,
+                    optional: false,
+                    base: Box::new(OptChainBase::Call(OptCall {
+                        span: *span,
+                        ctxt: *ctxt,
+                        callee: Box::new(replaced_callee),
+                        args: args.clone(),
+                        type_args: type_args.clone(),
+                    })),
+                }));
             }
             None
         }

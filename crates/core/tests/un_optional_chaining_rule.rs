@@ -1866,3 +1866,175 @@ g(a?.b);
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+// A temp-free lowering whose tail is a call at the end of a member path of
+// two or more links: `x?.a.b()` lowers to
+// `x === null || x === void 0 ? void 0 : x.a.b()` (tsc) or
+// `null == x ? void 0 : x.a.b()` (minified). The callee keeps its member path,
+// so `b` still runs with `x.a` as its receiver.
+
+#[test]
+fn transforms_strict_guard_call_at_end_of_member_path() {
+    let cases = [
+        ("x === null || x === void 0 ? void 0 : x.a.b()", "x?.a.b()"),
+        (
+            "x === null || void 0 === x ? void 0 : x.a.b(1, y)",
+            "x?.a.b(1, y)",
+        ),
+        (
+            "null === x || void 0 === x ? void 0 : x.a.b.c()",
+            "x?.a.b.c()",
+        ),
+        (
+            "x === null || x === void 0 ? void 0 : x[i].b(y)",
+            "x?.[i].b(y)",
+        ),
+        (
+            "x === null || x === void 0 ? void 0 : x.a[i].b()",
+            "x?.a[i].b()",
+        ),
+    ];
+    for (input, expected) in cases {
+        assert_eq_normalized(&apply(input), expected);
+    }
+}
+
+#[test]
+fn transforms_loose_guard_call_at_end_of_member_path() {
+    let cases = [
+        ("null == x ? void 0 : x.a.b()", "x?.a.b()"),
+        ("x == null ? void 0 : x.a.b(1, y)", "x?.a.b(1, y)"),
+        ("null == x ? void 0 : x.a.b.c()", "x?.a.b.c()"),
+        ("null == x ? void 0 : x[i].b(y)", "x?.[i].b(y)"),
+        ("x == null ? void 0 : x.a[i].b()", "x?.a[i].b()"),
+        ("x != null ? x.a.b() : void 0", "x?.a.b()"),
+    ];
+    for (input, expected) in cases {
+        assert_eq_normalized(&apply(input), expected);
+    }
+}
+
+#[test]
+fn minimal_recovers_call_at_end_of_member_path_only_on_identifier_root() {
+    let input = "x === null || x === void 0 ? void 0 : x.a.b(1)";
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Minimal), "x?.a.b(1)");
+    // A member root is read twice by the lowered form; folding the reads
+    // needs `standard`.
+    let input = "o.x === null || o.x === void 0 ? void 0 : o.x.a.b(1)";
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Minimal), input);
+    assert_eq_normalized(&apply(input), "o.x?.a.b(1)");
+}
+
+#[test]
+fn preserves_call_at_end_of_member_path_when_guard_is_not_the_root() {
+    let cases = [
+        "y === null || y === void 0 ? void 0 : x.a.b()",
+        "null == y ? void 0 : x.a.b()",
+        "y === null || y === void 0 ? void 0 : x.y.b()",
+        "null == y ? void 0 : x.y.b()",
+        "null == y ? void 0 : x.a.b(y)",
+        "null == y ? void 0 : x[y].b()",
+    ];
+    for input in cases {
+        assert_eq_normalized(&apply(input), input);
+    }
+}
+
+#[test]
+fn preserves_call_at_end_of_member_path_when_branch_is_not_void_0() {
+    let cases = [
+        "x === null || x === void 0 ? 0 : x.a.b()",
+        "x === null || x === void 0 ? null : x.a.b()",
+        "null == x ? null : x.a.b()",
+        "null == x ? y : x.a.b()",
+        "x != null ? x.a.b() : null",
+    ];
+    for input in cases {
+        assert_eq_normalized(&apply(input), input);
+    }
+}
+
+#[test]
+fn pipeline_recovers_call_at_end_of_member_path_in_return_position() {
+    let input = r#"
+export function f(x, i) {
+    return x === null || x === void 0 ? void 0 : x.a.b();
+}
+export function g(x, i) {
+    return null == x ? void 0 : x.a[i].b(i, 2);
+}
+export function h(x, i) {
+    return x === null || x === void 0 ? void 0 : x[i].b.c(i);
+}
+"#;
+    let expected = r#"
+export function f(x, i) {
+    return x?.a.b();
+}
+export function g(x, i) {
+    return x?.a[i].b(i, 2);
+}
+export function h(x, i) {
+    return x?.[i].b.c(i);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn pipeline_recovers_call_at_end_of_member_path_in_statement_position() {
+    let input = r#"
+export function f(x, i) {
+    x === null || x === void 0 ? void 0 : x.a.b(i);
+}
+export function g(x, i) {
+    null == x ? void 0 : x[i].b();
+}
+export function h(x, i) {
+    null == x || x.a.b.c(i);
+}
+"#;
+    let expected = r#"
+export function f(x, i) {
+    x?.a.b(i);
+}
+export function g(x, i) {
+    x?.[i].b();
+}
+export function h(x, i) {
+    x?.a.b.c(i);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn pipeline_recovers_call_at_end_of_member_path_in_expression_position() {
+    let input = r#"
+export function f(x, i) {
+    const r = x === null || x === void 0 ? void 0 : x.a.b(1);
+    g(null == x ? void 0 : x.a[i].b(), r);
+}
+"#;
+    let expected = r#"
+export function f(x, i) {
+    const r = x?.a.b(1);
+    g(x?.a[i].b(), r);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn pipeline_preserves_call_at_end_of_member_path_when_guard_is_not_the_root() {
+    let input = r#"
+export function f(x, y) {
+    return null == y ? void 0 : x.y.b();
+}
+"#;
+    let output = render(input);
+    assert!(
+        !output.contains("?."),
+        "unexpected optional chain: {output}"
+    );
+}
