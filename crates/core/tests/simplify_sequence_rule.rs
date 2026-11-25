@@ -687,3 +687,157 @@ for (let i = (eval("require('a')"), 0); i < n; i++) {
 "#;
     assert_eq_normalized(&apply(input), input);
 }
+
+#[test]
+fn splits_assignment_rhs_sequence_on_stable_targets() {
+    let input = r#"
+function fill(o, k) {
+    let x;
+    x = (a(), b());
+    o.p = (a(), 1);
+    o[k] = (a(), 2);
+    o["s"] = (a(), 3);
+    this.q = (a(), 4);
+    let t = 0;
+    t += (a(), o.n);
+    return [x, t];
+}
+"#;
+    let expected = r#"
+function fill(o, k) {
+    let x;
+    a();
+    x = b();
+    a();
+    o.p = 1;
+    a();
+    o[k] = 2;
+    a();
+    o["s"] = 3;
+    a();
+    this.q = 4;
+    let t = 0;
+    a();
+    t += o.n;
+    return [x, t];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn splits_assignment_rhs_sequence_left_by_return_split() {
+    let input = r#"
+function fill(o) {
+    return o.x = (a(), 1), o;
+}
+"#;
+    let expected = r#"
+function fill(o) {
+    a();
+    o.x = 1;
+    return o;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn keeps_assignment_rhs_sequence_when_prefix_writes_the_target() {
+    // The base, the key and a compound target's value are read before the
+    // right side runs.
+    let input = r#"
+function fill(o, k) {
+    let n = 1;
+    let box = {};
+    box.x = (box = {}, a());
+    o[k] = (k = "q", a());
+    o[k] = ([k] = list, a());
+    n += (n = 10, a());
+    n -= (n++, a());
+    return [n, box];
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_assignment_rhs_sequence_when_a_closure_writes_the_target() {
+    let input = r#"
+let box = {};
+let n = 1;
+function swap() {
+    box = {};
+    n = 10;
+}
+function fill() {
+    box.x = (swap(), 1);
+    n += (swap(), 1);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_assignment_rhs_sequence_on_targets_it_cannot_check() {
+    let input = r#"
+function fill(o) {
+    globalBox.x = (a(), 1);
+    globalName = (a(), 2);
+    o.inner.x = (a(), 3);
+    o[key()] = (a(), 4);
+    o.x += (a(), 5);
+    [o.y] = (a(), list);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_compound_assignment_rhs_sequence_when_module_mentions_arguments() {
+    let input = r#"
+function fill(n) {
+    n += (arguments[0] = 10, 1);
+    return n;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_this_member_assignment_rhs_sequence_around_super_call() {
+    let input = r#"
+class Child extends Base {
+    constructor() {
+        this.x = (super(), 1);
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_assignment_rhs_sequence_in_module_with_direct_eval() {
+    let input = r#"
+function fill(o) {
+    o.x = (a(), 1);
+    eval(src);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn minimal_keeps_assignment_rhs_sequence_that_hides_name_inference() {
+    let input = r#"
+let handler;
+handler = (0, function() {});
+"#;
+    assert_eq_normalized(&apply_minimal(input), input);
+    let expected = r#"
+let handler;
+0;
+handler = function() {};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

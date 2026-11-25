@@ -3,22 +3,27 @@ use crate::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, BlockStmt, Decl, Expr, ExprStmt, ForHead, ForInStmt, ForOfStmt,
-    ForStmt, Ident, IfStmt, Invalid, Lit, MemberExpr, Module, ModuleItem, ParenExpr, Pat,
-    ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, VarDecl, VarDeclKind,
-    VarDeclOrExpr, VarDeclarator, YieldExpr,
+    AssignExpr, AssignOp, AssignTarget, BlockStmt, Callee, Decl, Expr, ExprStmt, ForHead,
+    ForInStmt, ForOfStmt, ForStmt, Ident, IfStmt, Invalid, Lit, MemberExpr, MemberProp, Module,
+    ModuleItem, ParenExpr, Pat, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt,
+    ThrowStmt, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::{binding_id, BindingId};
 use super::RewriteLevel;
 
+use crate::analysis::binding_uses::{BindingUseIndex, UseKind};
 use crate::utils::paren::strip_parens;
 
 pub struct SimplifySequence {
     level: RewriteLevel,
+    unresolved_mark: Mark,
     /// The module contains a `with` statement.
     with_present: bool,
+    /// Facts for splitting an assignment's right-side sequence; `None` when
+    /// the module has no such assignment or has a dynamic-scope construct.
+    assign_split: Option<AssignSplitFacts>,
 }
 
 impl SimplifySequence {
@@ -26,10 +31,23 @@ impl SimplifySequence {
         Self::new_with_level(unresolved_mark, RewriteLevel::Standard)
     }
 
-    pub fn new_with_level(_unresolved_mark: Mark, level: RewriteLevel) -> Self {
+    pub fn new_with_level(unresolved_mark: Mark, level: RewriteLevel) -> Self {
         Self {
             level,
+            unresolved_mark,
             with_present: false,
+            assign_split: None,
+        }
+    }
+
+    fn split(&self, stmt: Stmt) -> Vec<Stmt> {
+        let stmts = split_stmt(stmt, self.level, self.with_present);
+        match &self.assign_split {
+            Some(facts) => stmts
+                .into_iter()
+                .flat_map(|stmt| facts.split_assign_rhs(stmt, self.level, self.unresolved_mark))
+                .collect(),
+            None => stmts,
         }
     }
 }
@@ -39,7 +57,9 @@ impl SimplifySequence {
 impl VisitMut for SimplifySequence {
     fn visit_mut_module(&mut self, module: &mut Module) {
         self.with_present = super::eval_utils::module_has_with_stmt(module);
+        self.assign_split = AssignSplitFacts::collect(module);
         module.visit_mut_children_with(self);
+        self.assign_split = None;
     }
 
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
@@ -49,11 +69,7 @@ impl VisitMut for SimplifySequence {
             item.visit_mut_children_with(self);
             match item {
                 ModuleItem::Stmt(stmt) => {
-                    new_items.extend(
-                        split_stmt(stmt, self.level, self.with_present)
-                            .into_iter()
-                            .map(ModuleItem::Stmt),
-                    );
+                    new_items.extend(self.split(stmt).into_iter().map(ModuleItem::Stmt));
                 }
                 ModuleItem::ModuleDecl(decl) => new_items.push(ModuleItem::ModuleDecl(decl)),
             }
@@ -66,7 +82,7 @@ impl VisitMut for SimplifySequence {
         let mut new_stmts = Vec::with_capacity(old_stmts.len());
         for mut stmt in old_stmts {
             stmt.visit_mut_children_with(self);
-            new_stmts.extend(split_stmt(stmt, self.level, self.with_present));
+            new_stmts.extend(self.split(stmt));
         }
         *stmts = new_stmts;
     }
@@ -238,6 +254,215 @@ fn try_split_assign_member(expr: &Expr, span: swc_core::common::Span) -> Option<
     });
 
     Some(vec![inner_stmt, outer_stmt])
+}
+
+// ---------------------------------------------------------------------------
+// Assignment right side: T = (p, …, v)  →  p; …; T = v
+// ---------------------------------------------------------------------------
+
+/// Facts for moving the leading expressions of an assignment's right-side
+/// sequence out as statements. Minifiers emit the shape by inlining a
+/// single-use helper (`o.x = (log(), v)`).
+///
+/// The target is evaluated before the right side: a member target's base
+/// object and computed key, and for a compound assignment the current value.
+/// Split, they are evaluated after the prefix instead, so each identifier
+/// they use must keep its value across the prefix (`a.x = (a = {}, f())`
+/// writes the old object). That is accepted only where it is a scope fact:
+/// a resolved binding that the prefix does not write and that is written
+/// nowhere outside the statement's own function, so no call in the prefix
+/// can reach a write. Everything else is skipped rather than proven: a nested
+/// base (`a.b.c = …`), any other key, a compound member target (the prefix
+/// can write the property through an alias), an unresolved or
+/// closure-written identifier, a module with `with` or direct `eval`, and a
+/// compound identifier target in a module that mentions `arguments` (a
+/// sloppy-mode parameter is aliased by it).
+struct AssignSplitFacts {
+    uses: BindingUseIndex,
+    arguments_present: bool,
+}
+
+impl AssignSplitFacts {
+    fn collect(module: &Module) -> Option<Self> {
+        if !module_has_sequence_rhs_assign(module)
+            || super::eval_utils::has_dynamic_scope_construct(module)
+        {
+            return None;
+        }
+        Some(Self {
+            uses: BindingUseIndex::collect(module),
+            arguments_present: module_mentions_arguments(module),
+        })
+    }
+
+    fn split_assign_rhs(
+        &self,
+        stmt: Stmt,
+        level: RewriteLevel,
+        unresolved_mark: Mark,
+    ) -> Vec<Stmt> {
+        let Stmt::Expr(ExprStmt { span, expr }) = stmt else {
+            return vec![stmt];
+        };
+        match *expr {
+            Expr::Assign(mut assign) if self.can_split(&assign, level, unresolved_mark) => {
+                let right = std::mem::replace(
+                    &mut assign.right,
+                    Box::new(Expr::Invalid(Invalid { span: DUMMY_SP })),
+                );
+                let (prefix, last) = split_expr_seq(right);
+                assign.right = last;
+                let mut stmts: Vec<Stmt> = prefix
+                    .into_iter()
+                    .flat_map(|expr| {
+                        self.split_assign_rhs(
+                            Stmt::Expr(ExprStmt { span, expr }),
+                            level,
+                            unresolved_mark,
+                        )
+                    })
+                    .collect();
+                stmts.push(Stmt::Expr(ExprStmt {
+                    span,
+                    expr: Box::new(Expr::Assign(assign)),
+                }));
+                stmts
+            }
+            other => vec![Stmt::Expr(ExprStmt {
+                span,
+                expr: Box::new(other),
+            })],
+        }
+    }
+
+    fn can_split(&self, assign: &AssignExpr, level: RewriteLevel, unresolved_mark: Mark) -> bool {
+        let Expr::Seq(seq) = strip_parens(&assign.right) else {
+            return false;
+        };
+        let Some((last, prefix)) = seq.exprs.split_last() else {
+            return false;
+        };
+        if prefix.is_empty() {
+            return false;
+        }
+        let compound = assign.op != AssignOp::Assign;
+        match &assign.left {
+            AssignTarget::Simple(SimpleAssignTarget::Ident(target)) => {
+                let target = &target.id;
+                if target.ctxt.outer() == unresolved_mark || prefix_writes(prefix, target) {
+                    return false;
+                }
+                if compound {
+                    // The current value is read before the prefix runs.
+                    !self.arguments_present && self.written_only_in_own_function(target)
+                } else {
+                    // `x = (0, function () {})` leaves the function unnamed;
+                    // `x = function () {}` names it `x`.
+                    level != RewriteLevel::Minimal || !is_name_inferred_value(last)
+                }
+            }
+            AssignTarget::Simple(SimpleAssignTarget::Member(member)) if !compound => {
+                let base_stable = match strip_parens(&member.obj) {
+                    Expr::Ident(base) => self.is_stable(base, prefix, unresolved_mark),
+                    // `super()` in the prefix initializes `this`.
+                    Expr::This(_) => !prefix_calls_super(prefix),
+                    _ => false,
+                };
+                base_stable
+                    && match &member.prop {
+                        MemberProp::Ident(_) | MemberProp::PrivateName(_) => true,
+                        MemberProp::Computed(computed) => match strip_parens(&computed.expr) {
+                            Expr::Lit(Lit::Str(_) | Lit::Num(_)) => true,
+                            Expr::Ident(key) => self.is_stable(key, prefix, unresolved_mark),
+                            _ => false,
+                        },
+                    }
+            }
+            _ => false,
+        }
+    }
+
+    fn is_stable(&self, ident: &Ident, prefix: &[Box<Expr>], unresolved_mark: Mark) -> bool {
+        ident.ctxt.outer() != unresolved_mark
+            && !prefix_writes(prefix, ident)
+            && self.written_only_in_own_function(ident)
+    }
+
+    /// Every write to the binding sits in the function that holds `ident`.
+    /// The function is found by `ident`'s own use site, so a span shared by
+    /// several uses (a synthesized or cloned node) fails closed.
+    fn written_only_in_own_function(&self, ident: &Ident) -> bool {
+        if ident.span.is_dummy() {
+            return false;
+        }
+        let sites = self.uses.use_sites(&binding_id(ident));
+        let mut own = sites.iter().filter(|site| site.span == ident.span);
+        let (Some(own_site), None) = (own.next(), own.next()) else {
+            return false;
+        };
+        sites
+            .iter()
+            .filter(|site| matches!(site.kind, UseKind::Write | UseKind::ReadWrite))
+            .all(|site| site.function_id == own_site.function_id)
+    }
+}
+
+fn prefix_writes(prefix: &[Box<Expr>], ident: &Ident) -> bool {
+    let id = binding_id(ident);
+    prefix
+        .iter()
+        .any(|expr| BindingUseIndex::collect_expr(expr).has_direct_write(&id))
+}
+
+fn prefix_calls_super(prefix: &[Box<Expr>]) -> bool {
+    struct Finder(bool);
+    impl Visit for Finder {
+        fn visit_callee(&mut self, callee: &Callee) {
+            if matches!(callee, Callee::Super(_)) {
+                self.0 = true;
+            }
+            callee.visit_children_with(self);
+        }
+    }
+    let mut finder = Finder(false);
+    for expr in prefix {
+        expr.visit_with(&mut finder);
+    }
+    finder.0
+}
+
+fn is_name_inferred_value(expr: &Expr) -> bool {
+    is_anonymous_function_or_class(expr) || matches!(strip_parens(expr), Expr::Arrow(_))
+}
+
+fn module_has_sequence_rhs_assign(module: &Module) -> bool {
+    struct Finder(bool);
+    impl Visit for Finder {
+        fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+            if matches!(strip_parens(&assign.right), Expr::Seq(_)) {
+                self.0 = true;
+                return;
+            }
+            assign.visit_children_with(self);
+        }
+    }
+    let mut finder = Finder(false);
+    module.visit_with(&mut finder);
+    finder.0
+}
+
+fn module_mentions_arguments(module: &Module) -> bool {
+    struct Finder(bool);
+    impl Visit for Finder {
+        fn visit_ident(&mut self, ident: &Ident) {
+            if ident.sym == "arguments" {
+                self.0 = true;
+            }
+        }
+    }
+    let mut finder = Finder(false);
+    module.visit_with(&mut finder);
+    finder.0
 }
 
 // ---------------------------------------------------------------------------
