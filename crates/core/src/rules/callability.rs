@@ -4,8 +4,8 @@ use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
     ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp,
     BindingIdent, CallExpr, Callee, Class, Decl, DefaultDecl, ExportSpecifier, Expr, FnDecl,
-    Function, MemberExpr, ModuleDecl, ModuleExportName, ModuleItem, NewExpr, Pat, ReturnStmt,
-    SimpleAssignTarget, Stmt, VarDeclarator,
+    Function, MemberExpr, ModuleDecl, ModuleExportName, ModuleItem, NewExpr, OptCall, Pat,
+    ReturnStmt, SimpleAssignTarget, Stmt, TaggedTpl, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -20,15 +20,18 @@ use super::helper_matcher::{
 /// the requiring call has been consumed by another proven class recovery.
 ///
 /// Only `.call` / `.apply` (lowered `super` calls) are recorded. A plain
-/// `F()` call does not block recovery: once a rule has proven a transpiler
-/// class shape, requiring `new` is an accepted function-to-class change
-/// (`docs/rewrite-assumptions.md`, `native_class_inheritance`). Rules that
-/// rebuild a class shape themselves must find their own class evidence.
+/// `F()` call does not make a binding `required`: once a rule has proven a
+/// transpiler class shape, requiring `new` is an accepted function-to-class
+/// change (`docs/rewrite-assumptions.md`, `native_class_inheritance`). Rules
+/// that rebuild a class shape themselves must find their own class evidence.
+/// Plain calls are indexed separately (`called_without_new`) for rules that
+/// veto on them.
 ///
 /// The same walk records constructor members the scope constructs, which
 /// class recovery must not turn into methods (`member_constructed`).
 pub(crate) struct CallabilityIndex {
     required: HashSet<BindingKey>,
+    called_directly: HashSet<BindingKey>,
     constructed_members: HashSet<MemberKey>,
 }
 
@@ -57,6 +60,14 @@ impl CallabilityIndex {
 
     pub(crate) fn requires_call(&self, binding: &BindingKey) -> bool {
         self.required.contains(binding)
+    }
+
+    /// Whether the scope calls this binding without `new`: `F(…)`, `F?.(…)`,
+    /// `(0, F)(…)` or a tagged template, directly or through the aliases
+    /// `requires_call` follows (`var G = F; G()`, an IIFE returning `F`).
+    /// Calls the scope cannot see are not covered.
+    pub(crate) fn called_without_new(&self, binding: &BindingKey) -> bool {
+        self.called_directly.contains(binding)
     }
 
     /// Whether the scope constructs this member of `owner` or reads its
@@ -122,9 +133,14 @@ where
     required.extend(from_roots);
     let constructed_members =
         close_constructed_members(collector.constructed_members, &ordinary, &value);
+    // A call through an alias calls what the alias evaluates to. An extra
+    // edge only keeps a function, so value aliases count too.
+    let mut called_directly = collector.called_directly;
+    close_required(&mut called_directly, &ordinary, &value, true);
 
     CallabilityIndex {
         required,
+        called_directly,
         constructed_members,
     }
 }
@@ -178,6 +194,8 @@ fn member_key(expr: &Expr) -> Option<MemberKey> {
 #[derive(Default)]
 struct CallabilityCollector {
     required: HashSet<BindingKey>,
+    /// Callees of plain calls; see [`CallabilityIndex::called_without_new`].
+    called_directly: HashSet<BindingKey>,
     /// Members constructed or whose `prototype` is read; see
     /// [`CallabilityIndex::member_constructed`].
     constructed_members: HashSet<MemberKey>,
@@ -577,6 +595,9 @@ impl Visit for CallabilityCollector {
         }
         self.record_iife_param_aliases(call);
         if let Callee::Expr(callee) = &call.callee {
+            if let Some(binding) = plain_callee_binding(callee) {
+                self.called_directly.insert(binding);
+            }
             if let Expr::Ident(callee) = strip_parens(callee) {
                 self.named_calls.push(NamedCall {
                     callee: binding_key(callee),
@@ -586,6 +607,32 @@ impl Visit for CallabilityCollector {
             }
         }
         call.visit_children_with(self);
+    }
+
+    fn visit_opt_call(&mut self, call: &OptCall) {
+        if let Some(binding) = plain_callee_binding(&call.callee) {
+            self.called_directly.insert(binding);
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_tagged_tpl(&mut self, tagged: &TaggedTpl) {
+        if let Some(binding) = plain_callee_binding(&tagged.tag) {
+            self.called_directly.insert(binding);
+        }
+        tagged.visit_children_with(self);
+    }
+}
+
+/// `F` in `F(…)`, `(F)(…)` or `(0, F)(…)`.
+fn plain_callee_binding(callee: &Expr) -> Option<BindingKey> {
+    match strip_parens(callee) {
+        Expr::Ident(ident) => Some(binding_key(ident)),
+        Expr::Seq(sequence) => match sequence.exprs.last().map(|last| strip_parens(last)) {
+            Some(Expr::Ident(ident)) => Some(binding_key(ident)),
+            _ => None,
+        },
+        _ => None,
     }
 }
 

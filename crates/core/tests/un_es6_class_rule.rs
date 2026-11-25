@@ -4661,3 +4661,174 @@ exports.make = function () { return new Proxy.createInstance(); };
     assert!(!output.contains("static createInstance"), "{output}");
     assert!(output.contains("new Proxy.createInstance()"), "{output}");
 }
+
+// ── Class evidence: rewriting removes [[Call]], so the wrapper must prove a class ──
+
+#[test]
+fn iife_returning_plain_function_stays_function() {
+    // A wrapper around one function and its return has the constructor-only
+    // class shape but no class evidence; every plain call would throw.
+    let input = r#"
+var tidy = (function () { function tidy(fn) { return fn; } return tidy; })();
+export default tidy;
+"#;
+    let output = apply(input);
+    assert!(!output.contains("class"), "{output}");
+    assert!(output.contains("function tidy(fn)"), "{output}");
+}
+
+#[test]
+fn arrow_iife_function_called_without_new_stays_function() {
+    let input = r#"
+var lib = (() => { function join(a, b) { return { a, b }; } return join; })();
+console.log(lib(1, 2));
+"#;
+    let output = apply(input);
+    assert!(!output.contains("class"), "{output}");
+}
+
+#[test]
+fn class_shaped_iife_called_without_new_stays_function() {
+    // `this` is class evidence, but the module calls the binding as a
+    // function, which a class rejects.
+    let input = r#"
+var Box = (function () {
+    function Box(v) { this.v = v; }
+    Box.prototype.get = function () { return this.v; };
+    return Box;
+}());
+var b = Box(1);
+"#;
+    let output = apply(input);
+    assert!(!output.contains("class"), "{output}");
+}
+
+#[test]
+fn class_shaped_iife_called_through_alias_stays_function() {
+    let input = r#"
+var Box = (function () {
+    function t(v) { this.v = v; }
+    return t;
+}());
+var make = Box;
+make(1);
+"#;
+    let output = apply(input);
+    assert!(!output.contains("class"), "{output}");
+}
+
+#[test]
+fn inner_constructor_called_without_new_stays_function() {
+    let input = r#"
+var Box = (function () {
+    function Box(v) { this.v = v; }
+    Box.of = function (v) { return Box(v); };
+    return Box;
+}());
+"#;
+    let output = apply(input);
+    assert!(!output.contains("class"), "{output}");
+}
+
+#[test]
+fn constructor_only_class_with_this_converts() {
+    let input = r#"var Pt=function(){function t(n){this.x=n}return t}();use(new Pt(1));"#;
+    let output = apply(input);
+    assert!(output.contains("class Pt"), "{output}");
+    assert!(output.contains("this.x = n"), "{output}");
+}
+
+#[test]
+fn constructor_this_only_in_nested_function_is_not_evidence() {
+    let input = r#"
+var mk = (function () {
+    function mk(n) { return function () { return this.n; }; }
+    return mk;
+}());
+"#;
+    let output = apply(input);
+    assert!(!output.contains("class"), "{output}");
+}
+
+#[test]
+fn constructor_this_in_arrow_is_evidence() {
+    let input = r#"
+var Tick = (function () {
+    function Tick() { var self = () => this; self(); }
+    return Tick;
+}());
+"#;
+    let output = apply(input);
+    assert!(output.contains("class Tick"), "{output}");
+}
+
+#[test]
+fn prototype_method_with_empty_constructor_converts() {
+    let input = r#"
+var Greeter = (function () {
+    function Greeter() {}
+    Greeter.prototype.hi = function () { return "hi"; };
+    return Greeter;
+}());
+"#;
+    let output = apply(input);
+    assert!(output.contains("class Greeter"), "{output}");
+    assert!(output.contains("hi()"), "{output}");
+}
+
+#[test]
+fn class_call_check_with_empty_constructor_converts() {
+    let input = r#"
+function _classCallCheck(a, n) { if (!(a instanceof n)) throw new TypeError("Cannot call a class as a function"); }
+var Empty = function () {
+    function Empty() { _classCallCheck(this, Empty); }
+    return Empty;
+}();
+"#;
+    let output = apply(input);
+    assert!(output.contains("class Empty"), "{output}");
+}
+
+#[test]
+fn derived_constructor_only_class_converts() {
+    let input = r#"
+var Sub = (function (_super) {
+    __extends(t, _super);
+    function t(name) { _super.call(this, name); }
+    return t;
+}(Base));
+"#;
+    let output = apply(input);
+    assert!(output.contains("class Sub extends Base"), "{output}");
+}
+
+#[test]
+fn ts_class_comment_alone_is_not_evidence() {
+    // The rule has no comment map: `/** @class */` with an empty constructor
+    // and no members stays a function (accepted loss).
+    let input = r#"
+var Marker = /** @class */ (function () {
+    function Marker() {}
+    return Marker;
+}());
+"#;
+    let output = apply(input);
+    assert!(!output.contains("class Marker"), "{output}");
+}
+
+#[test]
+fn pipeline_keeps_iife_returned_function_callable() {
+    let input = r#"
+var tidy = (function () { function tidy(fn) { return fn; } return tidy; })();
+export default tidy;
+"#;
+    let output = render(input);
+    assert!(!output.contains("class"), "{output}");
+}
+
+#[test]
+fn pipeline_minified_constructor_only_class_converts() {
+    let input = r#"var Pt=function(){function t(n){this.x=n}return t}();export{Pt};"#;
+    let output = render(input);
+    assert!(output.contains("class Pt"), "{output}");
+}

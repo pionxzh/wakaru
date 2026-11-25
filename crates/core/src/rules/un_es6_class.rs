@@ -1748,6 +1748,13 @@ fn try_iife_to_class(
 
     let inner_ctor_ident = find_inner_constructor_ident(body_stmts)?;
     let inner_ctor_name = inner_ctor_ident.sym.as_ref();
+    // A class has no [[Call]]. A plain call of either name in this scope
+    // would throw once the function becomes a class.
+    if callability.called_without_new(&binding_key(class_name))
+        || callability.called_without_new(&binding_key(inner_ctor_ident))
+    {
+        return None;
+    }
     let mut class_body = parse_class_body(
         body_stmts,
         &class_name.sym,
@@ -1764,11 +1771,38 @@ fn try_iife_to_class(
     // The inner constructor name is often not the outer binding (`t` vs `Foo`).
     // A remaining `_classCallCheck(this, t)` is a reference to `t`, and that
     // reference would reject recovery. Drop only that committed guard.
-    if strip_inner_ctor_class_call_checks(
+    let stripped_guard = strip_inner_ctor_class_call_checks(
         &mut class_body,
         class_call_check_helpers,
         &binding_key(inner_ctor_ident),
-    ) {
+    );
+    // An IIFE returning a plain function has the same shape as a
+    // constructor-only class. Rewriting it removes [[Call]], so the wrapper
+    // must show positive class evidence (bench decision
+    // constructibility-positive-evidence-only).
+    let has_class_evidence = stripped_guard
+        || super_class.is_some()
+        || class_body
+            .iter()
+            .any(|member| !matches!(member, ClassMember::Constructor(_)))
+        || constructor_uses_own_this(body_stmts, inner_ctor_ident)
+        || calls_class_helper(
+            body_stmts,
+            &[
+                inherits_helpers,
+                create_class_helpers,
+                call_super_helpers,
+                class_call_check_helpers,
+                set_prototype_of_helpers,
+                ts_extends_helpers,
+            ],
+            tslib_namespaces,
+            unresolved_mark,
+        );
+    if !has_class_evidence {
+        return None;
+    }
+    if stripped_guard {
         let derived = super_class.is_some();
         class_body.retain(|member| match member {
             ClassMember::Constructor(ctor) => {
@@ -1907,6 +1941,65 @@ fn try_returned_iife_to_class(
         ident: Some(ident),
         class,
     })
+}
+
+/// Whether the wrapper's constructor declaration reads its own `this`.
+/// Arrows share that `this`; nested functions and classes have their own.
+fn constructor_uses_own_this(body_stmts: &[Stmt], ctor: &Ident) -> bool {
+    struct Finder {
+        found: bool,
+    }
+    impl Visit for Finder {
+        fn visit_this_expr(&mut self, _: &ThisExpr) {
+            self.found = true;
+        }
+        fn visit_function(&mut self, _: &Function) {}
+        fn visit_class(&mut self, _: &Class) {}
+    }
+    body_stmts.iter().any(|stmt| match stmt {
+        Stmt::Decl(Decl::Fn(fn_decl)) if binding_key(&fn_decl.ident) == binding_key(ctor) => {
+            let mut finder = Finder { found: false };
+            fn_decl.function.params.visit_with(&mut finder);
+            fn_decl.function.body.visit_with(&mut finder);
+            finder.found
+        }
+        _ => false,
+    })
+}
+
+/// Whether the wrapper calls a class helper this rule already proved
+/// (`_classCallCheck`, `_createClass`, `_inherits`, `__extends`, …).
+fn calls_class_helper(
+    body_stmts: &[Stmt],
+    helper_sets: &[&HashSet<BindingKey>],
+    tslib_namespaces: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
+) -> bool {
+    struct Finder<'a> {
+        helper_sets: &'a [&'a HashSet<BindingKey>],
+        tslib_namespaces: &'a HashSet<BindingKey>,
+        unresolved_mark: Mark,
+        found: bool,
+    }
+    impl Visit for Finder<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                let callee = strip_parens(callee);
+                self.found |= matches!(callee, Expr::Ident(id)
+                    if self.helper_sets.iter().any(|set| set.contains(&binding_key(id))))
+                    || is_tslib_extends_member(callee, self.tslib_namespaces, self.unresolved_mark);
+            }
+            call.visit_children_with(self);
+        }
+    }
+    let mut finder = Finder {
+        helper_sets,
+        tslib_namespaces,
+        unresolved_mark,
+        found: false,
+    };
+    body_stmts.visit_with(&mut finder);
+    finder.found
 }
 
 fn expr_spells_name(expr: &Expr, name: &Atom) -> bool {
