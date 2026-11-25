@@ -1945,7 +1945,8 @@ function An(e, t, n) {
 }
 function Ln(e) {
     if (e && e.dispatchConfig.phasedRegistrationNames) {
-        for(var t = e._targetInst, n = []; t;){
+        const n = [];
+        for(var t = e._targetInst; t;){
             n.push(t);
             t = Nn(t);
         }
@@ -3880,7 +3881,8 @@ function Si(e) {
     function m(o, a, u, l) {
         let c = null;
         let s = null;
-        for(var f = a, m = a = 0, y = null; f !== null && m < u.length; m++){
+        let y = null;
+        for(var f = a, m = a = 0; f !== null && m < u.length; m++){
             if (f.index > m) {
                 y = f;
                 f = null;
@@ -3952,7 +3954,8 @@ function Si(e) {
             throw Error(a(151));
         }
         let f = s = null;
-        for(var m = u, y = u = 0, v = null, b = l.next(); m !== null && !b.done; y++, b = l.next()){
+        let v = null;
+        for(var m = u, y = u = 0, b = l.next(); m !== null && !b.done; y++, b = l.next()){
             if (m.index > y) {
                 v = m;
                 m = null;

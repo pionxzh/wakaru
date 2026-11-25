@@ -267,7 +267,11 @@ rationale, or level gating appear.
   with an initializer is extracted only while no kept declarator with an
   initializer precedes it (crossing one would reorder initializer effects); a
   declarator without an initializer is always extracted, since it evaluates
-  nothing. The no-init case is load-bearing for UnForOf — the swc/babel
+  nothing. The one exception is an inert initializer (a primitive, or an
+  array or object literal of primitives, such as `e = {}`) under a plain
+  name: it may cross kept initializers when the earlier write is provably
+  unobservable (`can_move_past_kept` in `rules/un_variable_merging.rs` lists
+  the conditions). The no-init case is load-bearing for UnForOf — the swc/babel
   iterator-protocol matcher needs the bare `step` pulled out of
   `for (var it = x[Symbol.iterator](), step; ...)`.
 - **UnBuiltinAliases** — runs after `UnVariableMergingDeclsOnly` so minifier
