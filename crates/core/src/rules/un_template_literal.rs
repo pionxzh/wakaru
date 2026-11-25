@@ -869,14 +869,24 @@ fn parts_to_template(parts: Vec<Part>, span: swc_core::common::Span) -> Tpl {
     }
 }
 
+/// The raw text of a quasi whose cooked value is `input`. Other control
+/// characters (`"\x1B[0m"`) get a `\xNN` escape: printing them raw would be
+/// equivalent but leaves invisible bytes in the output.
 fn escape_template_raw(input: &str) -> String {
-    input
-        .replace('\\', "\\\\")
-        .replace('`', "\\`")
-        .replace('$', "\\$")
-        .replace('\n', "\\n")
-        .replace('\t', "\\t")
-        .replace('\r', "\\r")
+    let mut out = String::with_capacity(input.len());
+    for c in input.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '`' => out.push_str("\\`"),
+            '$' => out.push_str("\\$"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            c if c.is_ascii_control() => out.push_str(&format!("\\x{:02X}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn escape_template_raw_cooked_copy(input: &str) -> String {

@@ -830,3 +830,18 @@ fn restores_template_literal_from_template_string_operands_in_pipeline() {
     let expected = r#"export const f = (t, i) => `#${t.id}:${i}`;"#;
     assert_eq_normalized(&render(input), expected);
 }
+
+#[test]
+fn escapes_control_characters_in_restored_template() {
+    // The cooked text holds a raw ESC; the template must spell it as an
+    // escape, not as an invisible byte.
+    let input = r#"
+var a = "\x1B[0m" + b;
+var c = `\x1B[1m` + d;
+"#;
+    let expected = r#"
+var a = `\x1B[0m${b}`;
+var c = `\x1B[1m${d}`;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
