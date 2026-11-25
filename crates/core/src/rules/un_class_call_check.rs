@@ -1,6 +1,6 @@
 use swc_core::ecma::ast::{
     BinaryOp, CallExpr, Callee, Class, ClassDecl, ClassExpr, ClassMember, Constructor, Expr,
-    Function, Ident, IfStmt, Lit, Module, ModuleItem, Pat, Stmt, UnaryOp, VarDeclarator,
+    Function, Ident, IfStmt, Module, ModuleItem, Pat, Stmt, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -161,8 +161,8 @@ fn inlined_class_call_check_target(if_stmt: &IfStmt) -> Option<&Ident> {
     };
     let is_babel_error = matches!(callee, Expr::Ident(id) if id.sym.as_ref() == "TypeError")
         && matches!(args, [message] if message.spread.is_none()
-            && matches!(message.expr.as_ref(), Expr::Lit(Lit::Str(s))
-                if s.value.as_str() == Some("Cannot call a class as a function")));
+            && super::expr_utils::string_lit_value(&message.expr)
+                .is_some_and(|s| s.as_str() == Some("Cannot call a class as a function")));
     is_babel_error.then_some(ctor)
 }
 

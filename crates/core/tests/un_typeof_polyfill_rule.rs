@@ -219,3 +219,17 @@ var result = helper(input);
     assert!(output.contains("const helper ="), "{output}");
     assert!(output.contains("helper(input)"), "{output}");
 }
+
+#[test]
+fn replaces_typeof_polyfill_with_template_literal_strings() {
+    // A minifier that prints strings as templates writes the helper's
+    // `"function"` / `"symbol"` comparands as `` `function` `` / `` `symbol` ``.
+    let input = r#"
+var o=typeof Symbol==`function`&&typeof Symbol.iterator==`symbol`?function(e){return typeof e}:function(e){return e&&typeof Symbol==`function`&&e.constructor===Symbol&&e!==Symbol.prototype?`symbol`:typeof e};
+var x = o(y) === `object`;
+"#;
+    let expected = r#"
+const x = typeof y === `object`;
+"#;
+    assert_eq_normalized(&render(input), expected);
+}

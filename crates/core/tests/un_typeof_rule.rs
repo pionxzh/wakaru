@@ -46,3 +46,19 @@ typeof x === "undefined";
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+
+#[test]
+fn transforms_typeof_compared_with_template_u() {
+    // A minifier that prints strings as templates writes `"u"` as `` `u` ``.
+    let input = r#"
+typeof x < `u`;
+`u` < typeof x;
+typeof x < `${u}`;
+"#;
+    let expected = r#"
+typeof x !== "undefined";
+typeof x === "undefined";
+typeof x < `${u}`;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

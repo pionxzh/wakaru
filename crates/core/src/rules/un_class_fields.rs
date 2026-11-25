@@ -1712,7 +1712,7 @@ impl VisitMut for PrivateFieldAccessRewriter<'_> {
 }
 
 fn is_private_field_kind(expr: &Expr) -> bool {
-    matches!(expr, Expr::Lit(Lit::Str(str_lit)) if str_lit.value.as_str() == Some("f"))
+    super::expr_utils::string_lit_value(expr).is_some_and(|kind| kind == "f")
 }
 
 fn private_member_expr(private_name: Atom, span: swc_core::common::Span) -> MemberExpr {

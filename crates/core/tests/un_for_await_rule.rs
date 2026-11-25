@@ -1459,3 +1459,44 @@ export async function collect(stream) {
 "#;
     assert_eq_normalized(&render(&input), expected);
 }
+
+#[test]
+fn for_await_from_esbuild_for_await_helper_with_template_strings() {
+    // A minifier that prints strings as templates writes the helper's
+    // `"asyncIterator"` / `"iterator"` names as templates.
+    let helper = ESBUILD_FOR_AWAIT.replace('"', "`");
+    let input = with_helper(
+        &helper,
+        r#"
+async function consume(stream) {
+  const output = [];
+  try {
+    for (var iter = __forAwait(stream), more, temp, error; more = !(temp = await iter.next()).done; more = false) {
+      const item = temp.value;
+      output.push(await normalize(item));
+    }
+  } catch (temp) {
+    error = [temp];
+  } finally {
+    try {
+      more && (temp = iter.return) && (await temp.call(iter));
+    } finally {
+      if (error)
+        throw error[0];
+    }
+  }
+  return output;
+}
+"#,
+    );
+    let expected = r#"
+async function consume(stream) {
+  const output = [];
+  for await (const item of stream) {
+    output.push(await normalize(item));
+  }
+  return output;
+}
+"#;
+    assert_eq_normalized(&render(&input), expected);
+}

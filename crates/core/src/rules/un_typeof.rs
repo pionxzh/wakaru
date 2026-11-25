@@ -2,6 +2,8 @@ use swc_core::common::util::take::Take;
 use swc_core::ecma::ast::{BinExpr, BinaryOp, Expr, Lit, Str, UnaryExpr, UnaryOp};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use super::expr_utils::string_lit_value;
+
 pub struct UnTypeof;
 
 impl VisitMut for UnTypeof {
@@ -61,8 +63,9 @@ fn is_typeof(expr: &Expr) -> bool {
     )
 }
 
+/// `"u"`, or `` `u` `` from a minifier that prints strings as templates.
 fn is_u_string(expr: &Expr) -> bool {
-    matches!(expr, Expr::Lit(Lit::Str(Str { value, .. })) if value == "u")
+    string_lit_value(expr).is_some_and(|value| value == "u")
 }
 
 fn undefined_string(span: swc_core::common::Span) -> Box<Expr> {

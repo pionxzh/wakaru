@@ -780,3 +780,29 @@ export { Foo };
     let output = render(input);
     assert!(output.contains("instanceof Other"), "{output}");
 }
+
+#[test]
+fn removes_inlined_guard_with_template_literal_message() {
+    // A minifier that prints strings as templates writes Babel's message as
+    // a template literal; it is the same marker.
+    let input = r#"
+var Foo = function() {
+    function t() {
+        if (!(this instanceof t)) throw TypeError(`Cannot call a class as a function`);
+        this.x = 1;
+    }
+    t.prototype.start = function() { return this.x; };
+    return t;
+}();
+use(Foo);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("class Foo"),
+        "expected class recovery:\n{output}"
+    );
+    assert!(
+        !output.contains("Cannot call a class as a function"),
+        "recovered class must drop the guard:\n{output}"
+    );
+}

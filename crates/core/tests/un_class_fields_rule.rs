@@ -1510,3 +1510,42 @@ fn a_private_read_that_a_rewrite_would_rebind_keeps_the_map() {
         assert_eq!(output.contains("#fn"), recovered, "{read}: {output}");
     }
 }
+
+#[test]
+fn promotes_tsc_weakmap_private_field_with_template_literal_kind() {
+    // A minifier that prints strings as templates writes the `"f"` kind
+    // argument as `` `f` ``.
+    let input = r#"
+var __classPrivateFieldSet = function(receiver, state, value, kind, f) {
+    return state.set(receiver, value), value;
+};
+var __classPrivateFieldGet = function(receiver, state, kind, f) {
+    return state.get(receiver);
+};
+var _Foo_x;
+class Foo {
+    constructor() {
+        _Foo_x.set(this, 1);
+    }
+    getX() {
+        return __classPrivateFieldGet(this, _Foo_x, `f`);
+    }
+    setX(value) {
+        __classPrivateFieldSet(this, _Foo_x, value, `f`);
+    }
+}
+_Foo_x = new WeakMap();
+"#;
+    let expected = r#"
+class Foo {
+    #x = 1;
+    getX() {
+        return this.#x;
+    }
+    setX(value) {
+        this.#x = value;
+    }
+}
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}

@@ -16,6 +16,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
+use crate::rules::expr_utils::string_lit_value;
 use crate::rules::helper_matcher::{binding_key, member_prop_name, var_declarator_binding_key};
 use crate::rules::match_context::MatchContext;
 use crate::utils::paren::strip_parens;
@@ -295,7 +296,7 @@ fn is_define_property_raw_call(call: &CallExpr, ctx: &MatchContext) -> bool {
     }
     matches!(
         strip_parens(&call.args[1].expr),
-        Expr::Lit(Lit::Str(s)) if &*s.value == "raw"
+        expr if string_lit_value(expr).is_some_and(|value| value == "raw")
     )
 }
 fn is_strings_slice_zero_call(call: &CallExpr, ctx: &MatchContext) -> bool {
@@ -976,7 +977,7 @@ fn is_default_key_guard(stmt: &Stmt, ctx: &MatchContext) -> bool {
             matches!(strip_parens(side), Expr::Unary(unary)
                 if unary.op == UnaryOp::TypeOf && ctx.is_binding(strip_parens(&unary.arg), "e"))
         };
-        let is_object = |side: &Expr| matches!(strip_parens(side), Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some("object"));
+        let is_object = |side: &Expr| is_string_lit(strip_parens(side), "object");
         matches!(bin.op, BinaryOp::EqEqEq | BinaryOp::EqEq)
             && ((is_typeof_e(&bin.left) && is_object(&bin.right))
                 || (is_object(&bin.left) && is_typeof_e(&bin.right)))
@@ -986,7 +987,7 @@ fn is_default_key_guard(stmt: &Stmt, ctx: &MatchContext) -> bool {
             return false;
         };
         bin.op == BinaryOp::In
-            && matches!(strip_parens(&bin.left), Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some("default"))
+            && is_string_lit(strip_parens(&bin.left), "default")
             && ctx.is_binding(strip_parens(&bin.right), "e")
     };
     let conjuncts = [*a, *b, *c];
@@ -1544,8 +1545,9 @@ fn is_typeof_of_symbol_iterator(expr: &Expr) -> bool {
     obj.sym.as_ref() == "Symbol"
         && matches!(&member.prop, MemberProp::Ident(id) if id.sym.as_ref() == "iterator")
 }
+/// A string literal with this value, in either spelling: `"x"` or `` `x` ``.
 fn is_string_lit(expr: &Expr, value: &str) -> bool {
-    matches!(expr, Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some(value))
+    string_lit_value(expr).is_some_and(|s| s.as_str() == Some(value))
 }
 fn is_typeof_identity_fn(expr: &Expr) -> bool {
     match expr {
@@ -1823,11 +1825,10 @@ fn is_new_reference_error_with_babel_message(expr: &Expr) -> bool {
     if args.len() != 1 {
         return false;
     }
-    let Expr::Lit(Lit::Str(s)) = args[0].expr.as_ref() else {
+    let Some(s) = string_lit_value(&args[0].expr) else {
         return false;
     };
-    s.value
-        .as_str()
+    s.as_str()
         .is_some_and(|v| v.contains("this hasn't been initialised"))
 }
 fn is_new_reference_error(expr: &Expr) -> bool {
@@ -3296,7 +3297,7 @@ fn is_typeof_array_length(expr: &Expr, array_param: &Ident) -> bool {
     )
 }
 fn is_number_string_literal(expr: &Expr) -> bool {
-    matches!(strip_parens(expr), Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some("number"))
+    is_string_lit(strip_parens(expr), "number")
 }
 fn has_delegate_return(stmts: &[Stmt], first_param: &Ident) -> bool {
     for stmt in stmts {

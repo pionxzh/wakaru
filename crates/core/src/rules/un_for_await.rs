@@ -1495,14 +1495,17 @@ impl EsbuildHelperFinder {
 }
 
 impl Visit for EsbuildHelperFinder {
-    fn visit_lit(&mut self, lit: &Lit) {
-        if let Lit::Str(s) = lit {
-            match s.value.as_str() {
+    fn visit_expr(&mut self, expr: &Expr) {
+        // A minifier may print `"iterator"` as `` `iterator` ``.
+        if let Some(value) = super::expr_utils::string_lit_value(expr) {
+            match value.as_str() {
                 Some("asyncIterator") => self.async_iterator_str = true,
                 Some("iterator") => self.iterator_str = true,
                 _ => {}
             }
+            return;
         }
+        expr.visit_children_with(self);
     }
 
     fn visit_new_expr(&mut self, new_expr: &NewExpr) {
