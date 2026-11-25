@@ -793,3 +793,40 @@ var out = tag(_tagged_template_literal(["\uD800", ""]), name);
         "lone surrogate must not become U+FFFD: {output}"
     );
 }
+
+#[test]
+fn restores_template_literal_from_template_string_operands() {
+    // A minifier that prints strings as templates writes `"#" + a` as
+    // `` `#` + a ``; the template operands are the text segments.
+    let input = r#"
+var a = `#` + id + `:` + name;
+var b = `x-`.concat(id, `-y`);
+var c = `${p}` + q;
+"#;
+    let expected = r#"
+var a = `#${id}:${name}`;
+var b = `x-${id}-y`;
+var c = `${p}` + q;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn restores_tagged_template_from_template_string_arrays() {
+    let input = r#"
+var _templateObject;
+function _taggedTemplateLiteral(e, t) { return e; }
+var out = tag(_templateObject || (_templateObject = _taggedTemplateLiteral([`hello `, ``], [`hello `, ``])), name);
+"#;
+    let expected = r#"
+var out = tag`hello ${name}`;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn restores_template_literal_from_template_string_operands_in_pipeline() {
+    let input = r#"export const f=(t,i)=>`#`+t.id+`:`+i;"#;
+    let expected = r#"export const f = (t, i) => `#${t.id}:${i}`;"#;
+    assert_eq_normalized(&render(input), expected);
+}

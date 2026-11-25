@@ -12,6 +12,7 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 use super::cross_module_helper_refs::{
     collect_cross_module_helper_refs, cross_module_member_helper_kind, CrossModuleHelperRefs,
 };
+use super::expr_utils::{as_string_lit, string_lit_value};
 use super::helper_matcher::{
     binding_key, expr_binding_key, removable_without_remaining_refs, remove_fn_decls_by_binding,
     remove_import_specifiers_by_binding, remove_var_declarators_by_binding,
@@ -231,27 +232,29 @@ fn collect_concat_parts(call: &CallExpr, out: &mut Vec<Part>) -> bool {
                 return false;
             }
         }
-        Expr::Lit(Lit::Str(s)) => {
+        receiver => {
+            let Some(s) = as_string_lit(receiver) else {
+                return false;
+            };
             let Some(text) = s.value.as_str() else {
                 return false;
             };
             out.push(Part::Text(text.to_owned(), s.span))
         }
-        _ => return false,
     }
 
     for arg in &call.args {
         if arg.spread.is_some() {
             return false;
         }
-        match &*arg.expr {
-            Expr::Lit(Lit::Str(s)) => {
+        match as_string_lit(&arg.expr) {
+            Some(s) => {
                 let Some(text) = s.value.as_str() else {
                     return false;
                 };
                 out.push(Part::Text(text.to_owned(), s.span))
             }
-            other => out.push(Part::Expr(Box::new(other.clone()))),
+            None => out.push(Part::Expr(arg.expr.clone())),
         }
     }
 
@@ -545,7 +548,7 @@ fn rewrite_plus_chain(expr: &Expr, level: RewriteLevel) -> Option<Expr> {
     }
 
     for op in &operands[first_str_idx..] {
-        if let Expr::Lit(Lit::Str(s)) = op {
+        if let Some(s) = as_string_lit(op) {
             parts.push(Part::Text(s.value.as_str()?.to_owned(), s.span));
         } else {
             parts.push(Part::Expr(Box::new((*op).clone())));
@@ -620,8 +623,9 @@ fn collect_add_chain<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
     }
 }
 
+/// A string literal in either spelling: `"a"` or `` `a` ``.
 fn is_str_lit(expr: &Expr) -> bool {
-    matches!(expr, Expr::Lit(Lit::Str(_)))
+    string_lit_value(expr).is_some()
 }
 
 fn normalize_escaped_newline_template_raw(tpl: &mut Tpl, level: RewriteLevel) {
@@ -755,8 +759,10 @@ fn collect_template_array(expr: &Expr) -> Option<Vec<Option<String>>> {
             if elem.spread.is_some() {
                 return None;
             }
+            if let Some(value) = string_lit_value(&elem.expr) {
+                return Some(Some(value.as_str()?.to_owned()));
+            }
             match elem.expr.as_ref() {
-                Expr::Lit(Lit::Str(s)) => Some(Some(s.value.as_str()?.to_owned())),
                 Expr::Ident(id) if id.sym.as_ref() == "undefined" => Some(None),
                 Expr::Unary(unary)
                     if unary.op == swc_core::ecma::ast::UnaryOp::Void

@@ -2563,11 +2563,9 @@ fn extract_exclusion_keys_from_array(arr: &swc_core::ecma::ast::ArrayLit) -> Opt
         if elem.spread.is_some() {
             return None;
         }
-        let Expr::Lit(Lit::Str(s)) = elem.expr.as_ref() else {
-            return None;
-        };
-        let key_str = s.value.as_str()?;
-        keys.push(Atom::from(key_str));
+        // A minifier may print the key as `` `id` ``.
+        let key = super::expr_utils::string_lit_value(elem.expr.as_ref())?;
+        keys.push(Atom::from(key.as_str()?));
     }
     Some(keys)
 }

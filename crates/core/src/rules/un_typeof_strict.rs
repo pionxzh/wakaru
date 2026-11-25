@@ -1,5 +1,7 @@
-use swc_core::ecma::ast::{BinExpr, BinaryOp, Expr, Lit, UnaryExpr, UnaryOp};
+use swc_core::ecma::ast::{BinExpr, BinaryOp, Expr, UnaryExpr, UnaryOp};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+
+use super::expr_utils::string_lit_value;
 
 /// Upgrade `typeof x == "string"` to `typeof x === "string"`.
 ///
@@ -42,6 +44,7 @@ fn is_typeof(expr: &Expr) -> bool {
     )
 }
 
+/// A string literal in either spelling: `"function"` or `` `function` ``.
 fn is_string_lit(expr: &Expr) -> bool {
-    matches!(expr, Expr::Lit(Lit::Str(_)))
+    string_lit_value(expr).is_some()
 }

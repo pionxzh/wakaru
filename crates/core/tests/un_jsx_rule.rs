@@ -920,3 +920,31 @@ const a = <b title={"\uD83D"}>{"\uD83D"}</b>;
 "#;
     assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
 }
+
+#[test]
+fn display_name_rename_reads_template_literal_name() {
+    // A minifier may print the name as `` `FancyCard` ``.
+    let input = r#"
+const c = styled.div;
+c.displayName = `FancyCard`;
+use(c);
+"#;
+    let expected = r#"
+const FancyCard = styled.div;
+FancyCard.displayName = `FancyCard`;
+use(FancyCard);
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
+fn display_name_with_substitution_does_not_rename() {
+    let input = r#"
+const c = styled.div;
+c.displayName = `Fancy${kind}`;
+use(c);
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), input);
+}

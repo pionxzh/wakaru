@@ -21,6 +21,7 @@ use crate::analysis::binding_uses::BindingUseIndex;
 use crate::js_names::to_valid_identifier_name;
 
 use super::decl_utils::{fresh_binding_ident, BindingId};
+use super::expr_utils::{as_string_lit, string_lit_value};
 use super::rename_utils::{
     collect_exported_binding_ids_from_items, rename_bindings, starts_with_lowercase, BindingRename,
 };
@@ -387,9 +388,8 @@ impl UnJsx {
 
     fn to_jsx_element_name(&self, expr: &Expr) -> Option<JSXElementName> {
         match expr {
-            Expr::Lit(Lit::Str(s)) => jsx_name_from_string(s, self.unresolved_mark),
-            Expr::Tpl(_) => {
-                let value = no_substitution_template_str(expr)?;
+            Expr::Lit(Lit::Str(_)) | Expr::Tpl(_) => {
+                let value = as_string_lit(expr)?;
                 jsx_name_from_string(&value, self.unresolved_mark)
             }
             Expr::Ident(ident) => Some(JSXElementName::Ident(ident.clone())),
@@ -877,13 +877,8 @@ impl Visit for ConstStringCollector {
             let Some(init) = &decl.init else {
                 continue;
             };
-            let value = match init.as_ref() {
-                Expr::Lit(Lit::Str(value)) => value.clone(),
-                Expr::Tpl(_) => match no_substitution_template_str(init) {
-                    Some(value) => value,
-                    None => continue,
-                },
-                _ => continue,
+            let Some(value) = as_string_lit(init) else {
+                continue;
             };
             self.values
                 .insert((binding.id.sym.clone(), binding.id.ctxt), value);
@@ -1001,10 +996,9 @@ fn display_name_assignment(stmt: &Stmt) -> Option<(Ident, Str)> {
     if prop.sym != *"displayName" || object.sym.len() > 2 {
         return None;
     }
-    let Expr::Lit(Lit::Str(display_name)) = right.as_ref() else {
-        return None;
-    };
-    Some((object.clone(), display_name.clone()))
+    // A minifier may print the name as `` `Name` ``.
+    let display_name = as_string_lit(right)?;
+    Some((object.clone(), display_name))
 }
 
 fn collect_display_name_candidates_in_module_items(items: &[ModuleItem]) -> Vec<(Ident, Str)> {
@@ -1567,31 +1561,11 @@ fn get_pragma(
 
 fn is_capitalization_invalid(expr: &Expr) -> bool {
     match expr {
-        Expr::Lit(Lit::Str(s)) => !starts_with_lowercase(&wtf8_to_string(&s.value)),
-        Expr::Tpl(_) => no_substitution_template_str(expr)
-            .is_some_and(|s| !starts_with_lowercase(&wtf8_to_string(&s.value))),
+        Expr::Lit(Lit::Str(_)) | Expr::Tpl(_) => string_lit_value(expr)
+            .is_some_and(|value| !starts_with_lowercase(&wtf8_to_string(value))),
         Expr::Ident(ident) => starts_with_lowercase(ident.sym.as_ref()),
         _ => false,
     }
-}
-
-/// A template literal with no substitutions is a string tag spelled with
-/// backticks (`` createElement(`div`, …) ``): the tag is that one cooked
-/// segment. A template with substitutions, or one whose segment has no cooked
-/// value (an invalid escape), is not a string.
-fn no_substitution_template_str(expr: &Expr) -> Option<Str> {
-    let Expr::Tpl(tpl) = expr else {
-        return None;
-    };
-    if !tpl.exprs.is_empty() || tpl.quasis.len() != 1 {
-        return None;
-    }
-    let cooked = tpl.quasis[0].cooked.as_ref()?;
-    Some(Str {
-        span: tpl.span,
-        value: cooked.clone(),
-        raw: None,
-    })
 }
 
 /// The resolver gives a lowercase element name the unresolved mark (it is an

@@ -58,3 +58,18 @@ fn typeof_eq_non_string_unchanged() {
     let input = r#"const x = typeof e == 42"#;
     assert_eq_normalized(&render(input), input);
 }
+
+#[test]
+fn typeof_loose_eq_template_string_becomes_strict() {
+    // A minifier may print the string operand as a template literal.
+    let input = r#"const x = typeof e == `function`; const y = `object` != typeof e"#;
+    let expected = r#"const x = typeof e === `function`; const y = typeof e !== `object`"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn typeof_loose_eq_template_with_substitution_unchanged() {
+    // The rule reads only literal comparands; `` `${t}` `` is not one.
+    let input = r#"const x = typeof e == `${t}`"#;
+    assert_eq_normalized(&render(input), input);
+}

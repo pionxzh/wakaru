@@ -2213,3 +2213,33 @@ var lib = ((Object) => {{
     let output = render_rule(&input, UnObjectRest::new);
     assert_eq_normalized(&output, &input);
 }
+
+#[test]
+fn template_literal_exclusion_keys_esbuild_rest_helper() {
+    // A minifier that prints every string as a template literal turns
+    // `["id"]` into `` [`id`] ``; the keys are the same strings.
+    let input = r#"
+var r=(e,t)=>{var n={};for(var r in e)Object.prototype.hasOwnProperty.call(e,r)&&t.indexOf(r)<0&&(n[r]=e[r]);if(e!=null&&Object.getOwnPropertySymbols)for(var r of Object.getOwnPropertySymbols(e))t.indexOf(r)<0&&Object.prototype.propertyIsEnumerable.call(e,r)&&(n[r]=e[r]);return n};
+const n=box,{id:i}=n,a=r(n,[`id`]);use(i,a);
+"#;
+    let expected = r#"
+const n = box;
+const { id, ...rest } = n;
+use(id, rest);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn template_with_substitution_is_not_an_exclusion_key() {
+    // `` `${k}` `` is not a static key, so the helper call stays.
+    let input = r#"
+var r=(e,t)=>{var n={};for(var r in e)Object.prototype.hasOwnProperty.call(e,r)&&t.indexOf(r)<0&&(n[r]=e[r]);if(e!=null&&Object.getOwnPropertySymbols)for(var r of Object.getOwnPropertySymbols(e))t.indexOf(r)<0&&Object.prototype.propertyIsEnumerable.call(e,r)&&(n[r]=e[r]);return n};
+const a=r(box,[`${k}`]);use(a);
+"#;
+    let output = render(input);
+    assert!(
+        !output.contains("...") && output.contains("${k}"),
+        "a template with a substitution must not become a rest key:\n{output}"
+    );
+}
