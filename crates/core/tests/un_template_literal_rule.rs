@@ -557,7 +557,7 @@ var d = "pick=" + (flag ? 1 : "no") + " cmp=" + (a < b);
     let expected = r#"
 var a = `n=${1} ok=${true}`;
 var b = `sum=${x + y} type=${typeof z}`;
-var c = `neg=${-count} inner=${`t${1}`}`;
+var c = `neg=${-count} inner=t${1}`;
 var d = `pick=${flag ? 1 : "no"} cmp=${a < b}`;
 "#;
     let output = apply_minimal(input);
@@ -806,7 +806,7 @@ var c = `${p}` + q;
     let expected = r#"
 var a = `#${id}:${name}`;
 var b = `x-${id}-y`;
-var c = `${p}` + q;
+var c = `${p}${q}`;
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
@@ -842,6 +842,23 @@ var c = `\x1B[1m` + d;
     let expected = r#"
 var a = `\x1B[0m${b}`;
 var c = `\x1B[1m${d}`;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn splices_template_operands_instead_of_nesting() {
+    // A template operand with substitutions is a string too: its segments
+    // join the result instead of nesting as `${`…`}`.
+    let input = r#"
+var a = `<${tag}>` + `|` + body;
+var b = "head: " + `${x} of ${y}` + tail;
+var c = n + `:${m}` + 1;
+"#;
+    let expected = r#"
+var a = `<${tag}>|${body}`;
+var b = `head: ${x} of ${y}${tail}`;
+var c = `${n}:${m}${1}`;
 "#;
     assert_eq_normalized(&apply(input), expected);
 }

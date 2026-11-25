@@ -550,6 +550,10 @@ fn rewrite_plus_chain(expr: &Expr, level: RewriteLevel) -> Option<Expr> {
     for op in &operands[first_str_idx..] {
         if let Some(s) = as_string_lit(op) {
             parts.push(Part::Text(s.value.as_str()?.to_owned(), s.span));
+        } else if let Expr::Tpl(tpl) = op {
+            // `` `a${x}` + y `` → `` `a${x}${y}` ``: splice the operand's
+            // segments in instead of nesting it as `${`a${x}`}`.
+            push_template_parts(tpl, &mut parts)?;
         } else {
             parts.push(Part::Expr(Box::new((*op).clone())));
         }
@@ -623,9 +627,23 @@ fn collect_add_chain<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
     }
 }
 
-/// A string literal in either spelling: `"a"` or `` `a` ``.
+/// An operand that is a string by syntax: a string literal in either
+/// spelling (`"a"` or `` `a` ``), or an untagged template with substitutions.
 fn is_str_lit(expr: &Expr) -> bool {
-    string_lit_value(expr).is_some()
+    string_lit_value(expr).is_some() || matches!(expr, Expr::Tpl(_))
+}
+
+/// Append an untagged template's segments and substitutions to `parts`.
+/// Fails on a segment with no cooked value or no UTF-8 form.
+fn push_template_parts(tpl: &Tpl, parts: &mut Vec<Part>) -> Option<()> {
+    for (index, quasi) in tpl.quasis.iter().enumerate() {
+        let text = quasi.cooked.as_ref()?.as_str()?;
+        parts.push(Part::Text(text.to_owned(), quasi.span));
+        if let Some(expr) = tpl.exprs.get(index) {
+            parts.push(Part::Expr(expr.clone()));
+        }
+    }
+    Some(())
 }
 
 fn normalize_escaped_newline_template_raw(tpl: &mut Tpl, level: RewriteLevel) {
