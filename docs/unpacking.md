@@ -110,13 +110,17 @@ attempted in order — first match wins:
    so a write there could change what the importer calls). How the importer
    calls a name proves nothing. Each input is detected when it is pushed,
    before the inputs after it are known, so an input that calls a name
-   imported from a relative path in factory position keeps its source and is
-   detected again once all inputs are known and one proves the name (Driver intake below). The
+   imported from a relative path in factory position, and either calls the
+   binding it initializes with no arguments or exports that binding, keeps
+   its source and is detected again once all inputs are known and one proves
+   the name (Driver intake below). The
    specifier is resolved against the importing input's path. The emitted
    factory modules need no helper; the chunk keeps its import of the shared
    chunk, so load order does not change. When the path names no input, the
-   chunk is not split by that import and gets a non-error
-   `lazy_helper_import_unresolved` warning naming it.
+   chunk is not split by that import; it gets a non-error
+   `lazy_helper_import_unresolved` warning naming it only when it calls such a
+   binding with no arguments (or the factory is inlined into its call), not
+   for an exported binding alone.
    Preserved Bun path comments are used only as filename hints for modules
    already found through structural helper patterns; they are not module
    boundaries by themselves. A lazy factory's object key is normally its
@@ -1578,8 +1582,10 @@ run a separate boolean detection preflight.
 esbuild/Bun/rolldown chunk that imports `__commonJS` or `__esm` from a shared
 chunk finds no helper then (see item 8 above). At push, each input records
 the exports it proves to be lazy helpers, and an input that calls a name
-imported from a relative path in factory position (`var x = name(fn)`, or
-the inlined `name(fn)()`) keeps its source; its receipt is provisional. Such
+imported from a relative path in factory position (`var x = name(fn)` where
+the module also calls `x()` or exports `x`, or the inlined `name(fn)()`)
+keeps its source; its receipt is provisional. A component wrapper whose
+result is never called bare or exported does not qualify. Such
 an input is retained even under a plain-input policy that would skip it.
 `finish` resolves its specifiers against the other inputs' paths (skipped
 inputs included) and, when one proves the imported name, detects the input
@@ -1589,7 +1595,9 @@ when it is an esbuild/Bun split, so the input's report may move from plain
 or scope-hoisted to structural; otherwise the first detection, the push
 action, and the plain-input policy stand. Only such an input is detected a
 second time. A specifier that names no input gets a
-`lazy_helper_import_unresolved` warning on the importing input. This runs
+`lazy_helper_import_unresolved` warning on the importing input when the
+zero-argument call or inlined form is present; an exported binding alone
+retains the input but does not warn. This runs
 before the shared phases, not at the fact barrier (see
 [fact-system.md](fact-system.md)): it decides which modules exist.
 

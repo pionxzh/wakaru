@@ -297,7 +297,8 @@ pub enum DiagnosticCode {
     EsSourceKeptCommonJs,
     MissingImportedName,
     /// An input calls a name imported from a relative path the way a
-    /// lazy-module helper is called, and that path names no input, so the
+    /// lazy-module helper is called and calls what it builds with no
+    /// arguments, and that path names no input, so the
     /// input is not split by it.
     LazyHelperImportUnresolved,
     OutputParseRecovered,

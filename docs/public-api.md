@@ -67,7 +67,8 @@ extraction), and `vue` (experimental standalone SFC recovery). See rustdoc for e
 - Return `InputReceipt` from `UnpackJob::push` so detection progress is
   available during intake.
 - Make the receipt provisional for an input that calls a name imported from
-  a relative path the way a lazy-module helper is called: a code-split
+  a relative path in factory position (`var x = name(fn)`) and also calls
+  `x()` or exports `x`, or calls the inlined `name(fn)()`: a code-split
   esbuild/Bun/rolldown chunk imports `__commonJS` and `__esm` from a shared
   chunk that may be pushed later. `finish` detects such an input again with
   the helpers its siblings prove, and its `InputReport` is final; it may

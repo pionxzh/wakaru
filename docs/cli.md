@@ -621,10 +621,14 @@ its `export *`, except `default`, which never does. `debug validate` reports
 the same defect as a finding, with star exports resolved.
 
 Unpack reports a non-error `lazy_helper_import_unresolved` warning, with or
-without `--diagnostics`, on an input that calls a name imported from a
-relative path the way esbuild, Bun, or rolldown call their lazy-module
-helpers (`var x = e((exports, module) => { … })`) when that path names none of
-the inputs. With code splitting, those bundlers put `__commonJS` and `__esm`
+without `--diagnostics`, on an input that looks like it uses a lazy-module
+helper imported from a relative path that names none of the inputs: it
+initializes a binding with a call of the imported name on a function, arrow,
+or one-method object (`var x = e((exports, module) => { … })`) and also calls
+that binding with no arguments (`x()`), or it calls the inlined form
+`e((exports, module) => { … })()` at top level. A component wrapper whose
+result is never called bare (`var C = defineThing({ setup() {} })`) gets no
+warning. With code splitting, those bundlers put `__commonJS` and `__esm`
 in a shared chunk, and an input is split by an imported helper only when the
 chunk it comes from is passed in the same run and proves it. The message
 names the imported names and the specifier. Passing that chunk, or the

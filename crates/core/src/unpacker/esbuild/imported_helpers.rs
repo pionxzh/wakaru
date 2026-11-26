@@ -32,16 +32,19 @@ use std::cell::RefCell;
 
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    Decl, ExportSpecifier, ImportPhase, ImportSpecifier, Module, ModuleDecl, ModuleExportName,
-    ModuleItem, Stmt,
+    CallExpr, Callee, Decl, ExportSpecifier, Expr, ImportPhase, ImportSpecifier, Module,
+    ModuleDecl, ModuleExportName, ModuleItem, Pat, Stmt,
 };
+use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::collections::{HashMap, HashSet};
 
 use super::factories::{
     collect_commonjs_helper_syms, collect_helper_syms, factory_shape_helper_sym,
+    locally_exported_atoms,
 };
 use super::inline_factories::{inlined_factory_helpers, unwritten_helper_positions};
+use crate::utils::paren::strip_parens;
 
 /// What a proven lazy helper builds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +66,12 @@ pub struct FactoryPositionImport {
     pub imported: String,
     /// The local binding the module calls.
     pub local: String,
+    /// The module also uses what the call built the way a lazy factory is
+    /// used: it calls a binding the call initialized with no arguments
+    /// (`x()`), or the call is the inlined `name(factory)()`. Without this,
+    /// the import only qualifies because such a binding is exported, which
+    /// says nothing about this module alone.
+    pub lazy_call_evidence: bool,
 }
 
 /// Proven helper exports of other inputs, keyed by the specifier the module
@@ -188,8 +197,15 @@ pub(crate) fn exported_lazy_helpers(module: &Module) -> Vec<(String, LazyHelperK
 }
 
 /// Names `module` imports from a relative specifier and calls in factory
-/// position. A non-empty result proves nothing about the names; it marks the
-/// module for detection again once the inputs that export them are known.
+/// position (`var x = name(factory)` or the inlined `name(factory)()`), when
+/// the module also treats a result as a lazy factory: it calls such an `x`
+/// with no arguments (or the call is inlined), or it exports `x`, since
+/// other chunks may call a factory that this one only defines. Component
+/// wrappers (`var C = wrap({ setup() {} })`) whose result is never called
+/// bare are not listed.
+///
+/// A non-empty result proves nothing about the names; it marks the module for
+/// detection again once the inputs that export them are known.
 pub(crate) fn factory_position_imports(module: &Module) -> Vec<FactoryPositionImport> {
     let imports: Vec<(String, Atom, Atom)> = named_imports(module)
         .filter(|(specifier, _, _)| is_relative_specifier(specifier))
@@ -198,26 +214,66 @@ pub(crate) fn factory_position_imports(module: &Module) -> Vec<FactoryPositionIm
         return Vec::new();
     }
     let locals: HashSet<Atom> = imports.iter().map(|(_, local, _)| local.clone()).collect();
-    let mut called = inlined_factory_helpers(module, &locals, false);
+    let inlined = inlined_factory_helpers(module, &locals, false);
+    // Helper local → bindings it initializes in factory position.
+    let mut bound: HashMap<Atom, Vec<Atom>> = HashMap::default();
     for item in &module.body {
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
             continue;
         };
-        called.extend(
-            var.decls
-                .iter()
-                .filter_map(|decl| factory_shape_helper_sym(decl, &locals)),
-        );
+        for decl in &var.decls {
+            let (Some(helper), Pat::Ident(binding)) =
+                (factory_shape_helper_sym(decl, &locals), &decl.name)
+            else {
+                continue;
+            };
+            bound
+                .entry(helper)
+                .or_default()
+                .push(binding.id.sym.clone());
+        }
     }
+    if inlined.is_empty() && bound.is_empty() {
+        return Vec::new();
+    }
+    let called_bare = zero_argument_callees(module);
+    let exported = locally_exported_atoms(&module.body);
     imports
         .into_iter()
-        .filter(|(_, local, _)| called.contains(local))
-        .map(|(specifier, local, imported)| FactoryPositionImport {
-            specifier,
-            imported: imported.to_string(),
-            local: local.to_string(),
+        .filter_map(|(specifier, local, imported)| {
+            let bindings = bound.get(&local).map(Vec::as_slice).unwrap_or_default();
+            let lazy_call_evidence =
+                inlined.contains(&local) || bindings.iter().any(|b| called_bare.contains(b));
+            let exported_factory = bindings.iter().any(|b| exported.contains(b));
+            (lazy_call_evidence || exported_factory).then(|| FactoryPositionImport {
+                specifier,
+                imported: imported.to_string(),
+                local: local.to_string(),
+                lazy_call_evidence,
+            })
         })
         .collect()
+}
+
+/// Names called with no arguments anywhere in `module` (`x()`). Matched by
+/// name: this is evidence for a warning and a second detection, not proof.
+fn zero_argument_callees(module: &Module) -> HashSet<Atom> {
+    struct Callees(HashSet<Atom>);
+    impl Visit for Callees {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if call.args.is_empty() {
+                if let Callee::Expr(callee) = &call.callee {
+                    if let Expr::Ident(ident) = strip_parens(callee) {
+                        self.0.insert(ident.sym.clone());
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+    let mut callees = Callees(HashSet::default());
+    module.visit_with(&mut callees);
+    callees.0
 }
 
 /// `(specifier, local, imported)` for each named import specifier of a

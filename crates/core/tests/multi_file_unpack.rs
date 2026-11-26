@@ -6074,3 +6074,54 @@ fn helper_import_from_another_directory_resolves_against_the_importer() {
     module_holding(&output.modules, "\"minified-alpha-provider\"");
     assert_valid_module_graph(&output.modules);
 }
+
+#[test]
+fn component_wrapper_import_is_no_lazy_helper_evidence() {
+    // A framework wrapper has the call shape, but nothing calls what it
+    // returns with no arguments.
+    let chunk = r#"import{d as w,m as memo}from"./index-shared.js";var C=w({setup(){return{label:"wrapped-component"}}});var M=memo(()=>1);console.log(C,M);
+"#;
+    let output = unpack_files(
+        split_inputs(&[("page.js", chunk)]),
+        DecompileOptions::default(),
+    )
+    .expect("a lone chunk should unpack");
+    assert!(
+        lazy_helper_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
+    assert_eq!(output.modules.len(), 1);
+}
+
+#[test]
+fn exported_factory_that_only_other_chunks_call_splits_with_its_runtime() {
+    let vendor = r#"import{b as e}from"./chunk-runtime.js";var l=e((f,o)=>{o.exports={label:"vendor-only-provider"}});export{l as t};
+"#;
+    let output = unpack_files(
+        split_inputs(&[
+            ("vendor.js", vendor),
+            ("chunk-runtime.js", SPLIT_RUNTIME_MINIFIED),
+        ]),
+        DecompileOptions::default(),
+    )
+    .expect("split chunks should unpack");
+    assert!(output
+        .detected_formats
+        .contains(&wakaru_core::BundleFormat::Esbuild));
+    let (provider, _) = module_holding(&output.modules, "\"vendor-only-provider\"");
+    assert!(provider != "vendor.js", "{:?}", output.modules);
+    assert_valid_module_graph(&output.modules);
+
+    // Alone, the exported factory is no evidence for a warning.
+    let alone = unpack_files(
+        split_inputs(&[("vendor.js", vendor)]),
+        DecompileOptions::default(),
+    )
+    .expect("a lone chunk should unpack");
+    assert!(
+        lazy_helper_warnings(&alone).is_empty(),
+        "{:?}",
+        alone.warnings
+    );
+}

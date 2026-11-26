@@ -76,7 +76,8 @@ pub(super) fn attach(
 
 /// Detects `input` again when it imports lazy-factory helpers that another
 /// input in `inputs` proves, and returns a warning for each import whose
-/// relative path names none of `inputs`.
+/// relative path names none of `inputs` and whose result this input calls
+/// like a lazy factory (see [`FactoryPositionImport::lazy_call_evidence`]).
 ///
 /// `inputs` lists every input of the run, the given one included, so an
 /// import of an input the caller skipped still resolves. A name counts as a
@@ -106,6 +107,9 @@ pub fn link_imported_lazy_helpers(
             .position(|key| *key == target)
             .map(|index| &inputs[index])
         else {
+            if !import.lazy_call_evidence {
+                continue;
+            }
             match unresolved
                 .iter_mut()
                 .find(|(specifier, _)| *specifier == import.specifier)
@@ -139,10 +143,10 @@ pub fn link_imported_lazy_helpers(
                 input.filename.clone(),
                 UnpackWarningKind::LazyHelperImportUnresolved,
                 format!(
-                    "{names} imported from {specifier:?} is called like a lazy module helper \
-                     (`__commonJS`, `__esm`), but {specifier:?} is not among the inputs, so \
-                     nothing proves it is one and the input is not split by it; pass that file \
-                     in the same run"
+                    "{names} imported from {specifier:?} looks like a lazy module helper \
+                     (`__commonJS`, `__esm`): what it builds is called with no arguments. \
+                     {specifier:?} is not among the inputs, so nothing proves it is one and the \
+                     input is not split by it; pass that file in the same run"
                 ),
             )
         })

@@ -227,8 +227,8 @@ pub enum UnpackWarningKind {
     /// it imports from does not export, so the module fails to link.
     MissingImportedName,
     /// An input calls a name imported from a relative path in lazy-factory
-    /// position (`var x = name(factory)`), and that path is not among the
-    /// inputs, so nothing proves the name is a lazy-factory helper and the
+    /// position (`var x = name(factory)`) and calls `x()`, or inlines
+    /// `name(factory)()`, and that path is not among the inputs, so nothing proves the name is a lazy-factory helper and the
     /// input is not split by it.
     LazyHelperImportUnresolved,
     OutputParseRecovered,

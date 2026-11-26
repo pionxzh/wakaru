@@ -108,7 +108,8 @@ impl UnpackJob {
     ///
     /// The receipt is provisional for an input that calls a name it imports
     /// from a relative path the way a lazy-module helper is called (`var x =
-    /// name(factory)`): with code splitting, esbuild, Bun, and rolldown import
+    /// name(factory)` where the input also calls `x()` or exports `x`, or the
+    /// inlined `name(factory)()`): with code splitting, esbuild, Bun, and rolldown import
     /// `__commonJS` and `__esm` from a shared chunk. Such an input is kept,
     /// with its source, whatever the plain-input policy, and
     /// [`finish`](UnpackJob::finish) detects it again once every input is
@@ -118,8 +119,9 @@ impl UnpackJob {
     /// to an esbuild/Bun [`InputDetection::Structural`] split; the
     /// [`InputReport`] in the output is final. When the detection does not
     /// change, the input gets the action its receipt implied, and a skipped
-    /// one is released at `finish`. An import whose path names no pushed input
-    /// gets a
+    /// one is released at `finish`. An import whose path names no pushed input,
+    /// when the input calls such an `x` with no arguments (or inlines the
+    /// call), gets a
     /// [`DiagnosticCode::LazyHelperImportUnresolved`](crate::DiagnosticCode::LazyHelperImportUnresolved)
     /// warning.
     pub fn push(&mut self, input: Source) -> Result<InputReceipt> {
@@ -1018,6 +1020,23 @@ function greeting(){return "hello"}"#;
             );
             assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
         }
+    }
+
+    #[test]
+    fn component_wrapper_chunk_is_released_at_push_under_skip() {
+        let mut job = UnpackJob::new(UnpackOptions::default()).expect("options should be valid");
+        job.push_with_unmatched(
+            Source::new(
+                "page.js",
+                r#"import{d as w,m as memo}from"./index.js";var C=w({setup(){}});var M=memo(()=>1);console.log(C,M);"#,
+            ),
+            UnmatchedInput::Skip,
+        )
+        .expect("chunk should be accepted");
+        assert!(format!("{job:?}").contains("retained_count: 0"), "{job:?}");
+        let output = job.finish().expect("job should finish");
+        assert_eq!(output.inputs[0].action, InputAction::Skipped);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     }
 
     #[test]

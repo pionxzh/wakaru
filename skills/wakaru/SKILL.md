@@ -264,9 +264,10 @@ reachability sweep is desired.
   imports a name its sibling ESM module does not export. Node cannot link
   it, so treat that edge, and every module that imports through it, as
   broken output, not as a missing export to look for elsewhere.
-- A `lazy_helper_import_unresolved` warning (non-error) means an input calls
-  esbuild/Bun/rolldown lazy-module helpers it imports from a file that is not
-  among the inputs, so it was not split. Rerun with that file (or its
+- A `lazy_helper_import_unresolved` warning (non-error) means an input looks
+  like it uses esbuild/Bun/rolldown lazy-module helpers (it wraps factories
+  with an imported name and calls the result with no arguments) imported from
+  a file that is not among the inputs, so it was not split. Rerun with that file (or its
   directory) in the same run.
 - With `--diagnostics`, an `es_source_kept_commonjs` warning (non-error)
   names a module that stayed CommonJS although its input looks compiled from
