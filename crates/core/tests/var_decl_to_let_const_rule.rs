@@ -2527,3 +2527,23 @@ for (let i = 0; i < 2; i++) {
 "#;
     assert_eq_normalized(&apply_rule(input), expected);
 }
+
+#[test]
+fn loop_body_var_read_by_later_declarator_stays_var() {
+    // `y` sees the value the previous iteration wrote to `x`.
+    let input = r#"
+for (var i = 0; i < 3; i++) {
+  var x, y = x;
+  use(y);
+  x = i;
+}
+"#;
+    let expected = r#"
+for (let i = 0; i < 3; i++) {
+  var x, y = x;
+  use(y);
+  x = i;
+}
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}

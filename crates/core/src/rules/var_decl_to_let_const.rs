@@ -1251,15 +1251,23 @@ impl Visit for LoopBodyUninitVarCollector {
                 stmt.visit_with(self);
                 continue;
             }
-            for decl in &var.decls {
+            for (decl_index, decl) in var.decls.iter().enumerate() {
                 if decl.init.is_some() {
                     decl.visit_with(self);
                     continue;
                 }
                 let mut ids = HashSet::default();
                 collect_binding_ids_from_pat(&decl.name, &mut ids);
+                let later_decls = &var.decls[decl_index + 1..];
                 for id in ids {
-                    if !first_mention_writes(&stmts[index + 1..], &id) {
+                    // `var x, y = x;` reads the carried value before any later
+                    // statement can write it.
+                    let read_by_later_decl = later_decls.iter().any(|later| {
+                        let mut refs = AllIdentRefCollector::default();
+                        later.visit_with(&mut refs);
+                        refs.refs.contains(&id)
+                    });
+                    if read_by_later_decl || !first_mention_writes(&stmts[index + 1..], &id) {
                         self.ids.insert(id);
                     }
                 }
