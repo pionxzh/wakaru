@@ -30,10 +30,10 @@ pub use types::{
     PreparedModuleProvenance, PreparedUnpackOutput, UnpackWarning, UnpackWarningKind,
 };
 pub use unpack::{
-    explain_interop, prepare_unpack_input, prepare_unpack_input_with_policy,
-    unpack_prepared_inputs, unpack_prepared_inputs_with_policy, EdgeReport, InteropReport,
-    ModuleInterop, PreparedInputDetection, PreparedUnpackInput, ProviderReport, ScopeHoistPolicy,
-    SplitRefusal, SplitRefusalReason,
+    explain_interop, link_imported_lazy_helpers, prepare_unpack_input,
+    prepare_unpack_input_with_policy, unpack_prepared_inputs, unpack_prepared_inputs_with_policy,
+    EdgeReport, InputHelperExports, InteropReport, ModuleInterop, PreparedInputDetection,
+    PreparedUnpackInput, ProviderReport, ScopeHoistPolicy, SplitRefusal, SplitRefusalReason,
 };
 
 /// Legacy adapters retained for `wakaru-core`'s integration tests.

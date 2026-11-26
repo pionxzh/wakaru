@@ -479,7 +479,7 @@ result from a run that produced nothing.
 
 | Error-class (`is_error: true`) | Non-error |
 |---|---|
-| `raw_normalization_failed`, `fact_collection_failed`, `webpack_factory_recovery_failed`, `decompile_failed`, `duplicate_declaration`, `output_parse_recovered`, `output_parse_failed` | `input_parse_recovered`, `tdz_violation`, `import_cycle`, `cross_module_class_call`, `commonjs_export_unrecovered`, `commonjs_require_unrecovered`, `commonjs_require_of_esm`, `commonjs_exports_escape`, `missing_imported_name`, `es_source_kept_commonjs`, `runtime_residual`, `gtm_unsupported_escape`, `bundle_split_refused` |
+| `raw_normalization_failed`, `fact_collection_failed`, `webpack_factory_recovery_failed`, `decompile_failed`, `duplicate_declaration`, `output_parse_recovered`, `output_parse_failed` | `input_parse_recovered`, `tdz_violation`, `import_cycle`, `cross_module_class_call`, `commonjs_export_unrecovered`, `commonjs_require_unrecovered`, `commonjs_require_of_esm`, `commonjs_exports_escape`, `missing_imported_name`, `es_source_kept_commonjs`, `runtime_residual`, `gtm_unsupported_escape`, `bundle_split_refused`, `lazy_helper_import_unresolved` |
 
 `duplicate_declaration`, `es_source_kept_commonjs`, and the `output_parse_*`
 checks run only with `--diagnostics`. Without it, Wakaru does not re-parse emitted modules, so a
@@ -619,6 +619,16 @@ graph that imports it runs. A sibling with no `import` or `export` is
 CommonJS to Node and is not checked; neither is a name that may come through
 its `export *`, except `default`, which never does. `debug validate` reports
 the same defect as a finding, with star exports resolved.
+
+Unpack reports a non-error `lazy_helper_import_unresolved` warning, with or
+without `--diagnostics`, on an input that calls a name imported from a
+relative path the way esbuild, Bun, or rolldown call their lazy-module
+helpers (`var x = e((exports, module) => { … })`) when that path names none of
+the inputs. With code splitting, those bundlers put `__commonJS` and `__esm`
+in a shared chunk, and an input is split by an imported helper only when the
+chunk it comes from is passed in the same run and proves it. The message
+names the imported names and the specifier. Passing that chunk, or the
+directory that holds it, may split the input.
 
 With `--diagnostics`, decompile and unpack report a non-error
 `es_source_kept_commonjs` warning for a module that stayed CommonJS although

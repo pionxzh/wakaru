@@ -1837,6 +1837,8 @@ fn run_public_unpack(
     // directory candidates whose bundle split was refused; each is processed
     // as one file and gets a warning
     let mut refused_candidates = Vec::new();
+    // directory candidates counted as plain at intake
+    let mut plain_candidates = Vec::new();
     let mut pushed_inputs = 0usize;
     // inputs the job itself received; a run of containers only has none
     let mut job_inputs = 0usize;
@@ -1916,6 +1918,7 @@ fn run_public_unpack(
                         refused_candidates.push(receipt.id);
                     } else {
                         stats.plain += 1;
+                        plain_candidates.push(receipt.id);
                     }
                 }
             }
@@ -1944,6 +1947,12 @@ fn run_public_unpack(
         if saw_directory && output.modules.is_empty() {
             bail!("no parseable JavaScript files found in directory input");
         }
+        recount_candidates_detected_at_finish(
+            &mut stats,
+            &output.inputs,
+            &refused_candidates,
+            &plain_candidates,
+        );
         let single_input_name =
             (output.inputs.len() == 1).then(|| output.inputs[0].filename.clone());
         let refusal_warnings = split_refusal_warnings(&output.inputs, &refused_candidates);
@@ -1961,6 +1970,30 @@ fn run_public_unpack(
         gtm,
         bun_embedded_sources,
     })
+}
+
+/// Counts as detected each directory candidate that its receipt reported as refused or plain and
+/// `finish` detected as a bundle: a receipt is provisional for a chunk that imports lazy-module
+/// helpers from another input (see `wakaru::UnpackJob::push`).
+fn recount_candidates_detected_at_finish(
+    stats: &mut DirectoryScanStats,
+    inputs: &[wakaru::InputReport],
+    refused: &[wakaru::InputId],
+    plain: &[wakaru::InputId],
+) {
+    for input in inputs {
+        if input.detection == wakaru::InputDetection::Plain {
+            continue;
+        }
+        if refused.contains(&input.id) {
+            stats.refused -= 1;
+        } else if plain.contains(&input.id) {
+            stats.plain -= 1;
+        } else {
+            continue;
+        }
+        stats.detected += 1;
+    }
 }
 
 /// Warning kind for a directory candidate that matched a bundle format whose split was refused.

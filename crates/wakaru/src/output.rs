@@ -296,6 +296,10 @@ pub enum DiagnosticCode {
     CommonJsExportsEscape,
     EsSourceKeptCommonJs,
     MissingImportedName,
+    /// An input calls a name imported from a relative path the way a
+    /// lazy-module helper is called, and that path names no input, so the
+    /// input is not split by it.
+    LazyHelperImportUnresolved,
     OutputParseRecovered,
     OutputParseFailed,
 }
@@ -319,6 +323,7 @@ impl DiagnosticCode {
             Self::CommonJsExportsEscape => "commonjs_exports_escape",
             Self::EsSourceKeptCommonJs => "es_source_kept_commonjs",
             Self::MissingImportedName => "missing_imported_name",
+            Self::LazyHelperImportUnresolved => "lazy_helper_import_unresolved",
             Self::OutputParseRecovered => "output_parse_recovered",
             Self::OutputParseFailed => "output_parse_failed",
         }

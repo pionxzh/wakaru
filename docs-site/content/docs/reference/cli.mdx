@@ -251,6 +251,12 @@ ESM output module imports a name that the sibling ESM module it names does
 not export. Node fails to link that module, so none of the module graph that
 imports it runs.
 
+Unpack always reports a non-error `lazy_helper_import_unresolved` warning
+when an input calls esbuild, Bun, or rolldown lazy-module helpers
+(`__commonJS`, `__esm`) that it imports from a file not among the inputs.
+With code splitting those helpers live in a shared chunk; pass that chunk in
+the same run so the input can be split.
+
 With `--diagnostics`, decompile and unpack report a non-error
 `es_source_kept_commonjs` warning for a module that stayed CommonJS although
 its input looks compiled from an ES module, with the evidence and the

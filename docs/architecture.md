@@ -105,7 +105,10 @@ format limits, partial-failure policy, and Inspect clustering rules are in
 
 The driver owns parsing/resolution, rule execution, the cross-module barrier,
 and emission. `UnpackJob` adds incremental intake: each push detects once,
-retains a compatible AST for processing, and releases skipped inputs. Prepared
+retains a compatible AST for processing, and releases skipped inputs. An input
+that calls an imported name the way a lazy-module helper is called keeps its
+source instead, and `finish` may detect it once more against its siblings (Driver intake in
+[unpacking.md](unpacking.md)). Prepared
 ASTs avoid an emit/parse round trip; raw and source-map modes may materialize
 text when their contracts require it. A prepared AST carries the detector's own
 `SyntaxContext` conventions for the bindings it synthesized, so the driver

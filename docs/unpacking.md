@@ -91,16 +91,32 @@ attempted in order — first match wins:
    is done only for a call in a top-level `var` initializer or expression
    statement (not in a function, class, accessor, or loop, where the
    factory could run more than once), and only for a helper declared by one
-   top-level `var` before the call and never written. rolldown's `__esmMin =
-   (fn, res, err) => () => { if (err) throw err[0]; try { return fn && (res =
-   fn(fn = 0)), res } catch (e) { throw err = [e], e } }` takes a third
-   parameter and is matched by its whole body; its factories become lazy ES
-   module initializers like `__esm`'s. The emitted initializer does not keep
-   a thrown error: where rolldown's helper throws the same error again on
-   every later call, a later call of the emitted one returns without running
-   the factory. Helpers are found only where the input declares them: a
-   code-split chunk that imports `__commonJS` or `__esm` from another chunk is
-   not split.
+   top-level `var` before the call and never written, or imported from
+   another input that proves it (below). rolldown's `__esmMin = (fn, res,
+   err) => () => { if (err) throw err[0]; try { return fn && (res = fn(fn =
+   0)), res } catch (e) { throw err = [e], e } }` takes a third parameter
+   and is matched by its whole body; its factories become lazy ES module
+   initializers like `__esm`'s. The emitted initializer does not keep a
+   thrown error: where rolldown's helper throws the same error again on every
+   later call, a later call of the emitted one returns without running the
+   factory.
+   With code splitting, esbuild, Bun, and rolldown declare these helpers in
+   one shared chunk, and every other chunk imports them by name (`import { b
+   as e } from "./chunk-X.js"; var l = e((f, o) => { … })`). Such a chunk is
+   split only when the chunk it imports from is among the inputs of the same
+   run and proves the export is a helper: its binding is declared by one
+   top-level `var` with a helper initializer, exported through an `export {
+   … }` list, and never written in that chunk (an export is a live binding,
+   so a write there could change what the importer calls). How the importer
+   calls a name proves nothing. Each input is detected when it is pushed,
+   before the inputs after it are known, so an input that calls a name
+   imported from a relative path in factory position keeps its source and is
+   detected again once all inputs are known and one proves the name (Driver intake below). The
+   specifier is resolved against the importing input's path. The emitted
+   factory modules need no helper; the chunk keeps its import of the shared
+   chunk, so load order does not change. When the path names no input, the
+   chunk is not split by that import and gets a non-error
+   `lazy_helper_import_unresolved` warning naming it.
    Preserved Bun path comments are used only as filename hints for modules
    already found through structural helper patterns; they are not module
    boundaries by themselves. A lazy factory's object key is normally its
@@ -1552,11 +1568,30 @@ detector output from all inputs and skips the normal decompile pipeline.
 The CLI also accepts directory inputs with `--unpack`. It expands directories
 recursively to `.js`, `.mjs`, and `.cjs` candidates while skipping hidden
 files/directories and `node_modules`, then pushes each candidate directly into
-one `UnpackJob` with `UnmatchedInput::SkipUnrecognized`. Plain directory
-candidates are skipped and released during the walk; the CLI does not run a
-separate boolean detection preflight. A candidate whose format matched while
-its split was refused is not skipped: it is processed as one file, like an
-explicit plain input.
+one `UnpackJob` with `UnmatchedInput::Process`, as if it were passed
+explicitly: a chunk that holds one module is not detected as a bundle, and
+dropping it would break the imports of the files around it. The CLI does not
+run a separate boolean detection preflight.
+
+**Imported lazy-module helpers.** `UnpackJob::push` (and each input of
+`unpack_files`) detects an input before the inputs after it are known, so an
+esbuild/Bun/rolldown chunk that imports `__commonJS` or `__esm` from a shared
+chunk finds no helper then (see item 8 above). At push, each input records
+the exports it proves to be lazy helpers, and an input that calls a name
+imported from a relative path in factory position (`var x = name(fn)`, or
+the inlined `name(fn)()`) keeps its source; its receipt is provisional. Such
+an input is retained even under a plain-input policy that would skip it.
+`finish` resolves its specifiers against the other inputs' paths (skipped
+inputs included) and, when one proves the imported name, detects the input
+again with that name treated as a helper
+(`driver/unpack/helper_link.rs`). The new detection replaces the first only
+when it is an esbuild/Bun split, so the input's report may move from plain
+or scope-hoisted to structural; otherwise the first detection, the push
+action, and the plain-input policy stand. Only such an input is detected a
+second time. A specifier that names no input gets a
+`lazy_helper_import_unresolved` warning on the importing input. This runs
+before the shared phases, not at the fact barrier (see
+[fact-system.md](fact-system.md)): it decides which modules exist.
 
 ### Refused splits
 

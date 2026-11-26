@@ -226,6 +226,11 @@ pub enum UnpackWarningKind {
     /// An ES module output imports a name that the sibling ES module output
     /// it imports from does not export, so the module fails to link.
     MissingImportedName,
+    /// An input calls a name imported from a relative path in lazy-factory
+    /// position (`var x = name(factory)`), and that path is not among the
+    /// inputs, so nothing proves the name is a lazy-factory helper and the
+    /// input is not split by it.
+    LazyHelperImportUnresolved,
     OutputParseRecovered,
     OutputParseFailed,
 }
@@ -249,6 +254,7 @@ impl UnpackWarningKind {
             Self::CommonJsExportsEscape => "commonjs_exports_escape",
             Self::EsSourceKeptCommonJs => "es_source_kept_commonjs",
             Self::MissingImportedName => "missing_imported_name",
+            Self::LazyHelperImportUnresolved => "lazy_helper_import_unresolved",
             Self::OutputParseRecovered => "output_parse_recovered",
             Self::OutputParseFailed => "output_parse_failed",
         }
@@ -270,6 +276,7 @@ impl UnpackWarningKind {
                 | Self::CommonJsExportsEscape
                 | Self::EsSourceKeptCommonJs
                 | Self::MissingImportedName
+                | Self::LazyHelperImportUnresolved
         )
     }
 

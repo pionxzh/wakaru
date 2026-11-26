@@ -13,7 +13,10 @@
 //! accessor between the call and the module), to a factory that is a function
 //! or arrow expression, and to a helper declared by one top-level `var`
 //! declarator before the call and never written, so the closure is built from
-//! the same helper value.
+//! the same helper value. A helper imported from another input qualifies too
+//! when that input proves it (see `imported_helpers`): imports are bound
+//! before any code runs, the importer cannot write them, and the exporter's
+//! proof covers writes in its own module.
 
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, Spanned, SyntaxContext, DUMMY_SP};
@@ -34,13 +37,24 @@ use super::bindings::collect_write_bindings;
 /// Whether a top-level evaluation position calls a helper's closure on the
 /// spot (`helper(factory)()`). A cheap precheck before cloning the module.
 pub(super) fn has_inlined_factory_calls(module: &Module, helper_syms: &HashSet<Atom>) -> bool {
-    if helper_syms.is_empty() {
-        return false;
-    }
+    !inlined_factory_helpers(module, helper_syms, true).is_empty()
+}
+
+/// The helpers among `helper_syms` whose closure a top-level evaluation
+/// position calls on the spot; only the first one found with `first_only`.
+pub(super) fn inlined_factory_helpers(
+    module: &Module,
+    helper_syms: &HashSet<Atom>,
+    first_only: bool,
+) -> HashSet<Atom> {
     let mut finder = InlineCallFinder {
         helper_syms,
-        found: false,
+        first_only,
+        found: HashSet::default(),
     };
+    if helper_syms.is_empty() {
+        return finder.found;
+    }
     for item in &module.body {
         match item {
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) if var.kind == VarDeclKind::Var => {
@@ -53,20 +67,44 @@ pub(super) fn has_inlined_factory_calls(module: &Module, helper_syms: &HashSet<A
             ModuleItem::Stmt(Stmt::Expr(stmt)) => stmt.expr.visit_with(&mut finder),
             _ => {}
         }
-        if finder.found {
-            return true;
+        if finder.done() {
+            break;
         }
     }
-    false
+    finder.found
 }
 
 /// Give each inlined factory call its own `var` declarator. Returns whether
 /// the module changed.
-pub(super) fn name_inlined_factories(module: &mut Module, helper_syms: &HashSet<Atom>) -> bool {
+///
+/// A helper in `imported_helpers` is an import binding another input proved
+/// to be a lazy helper that its module never writes; the importer cannot
+/// write an import binding, and imports are bound before any code runs, so
+/// such a helper needs no declaration check here.
+pub(super) fn name_inlined_factories(
+    module: &mut Module,
+    helper_syms: &HashSet<Atom>,
+    imported_helpers: &HashSet<Atom>,
+) -> bool {
     if !has_inlined_factory_calls(module, helper_syms) {
         return false;
     }
-    let helpers = unwritten_helper_positions(module, helper_syms);
+    let local_helpers: HashSet<Atom> = helper_syms
+        .iter()
+        .filter(|sym| !imported_helpers.contains(*sym))
+        .cloned()
+        .collect();
+    let mut helpers: HashMap<Atom, Option<(usize, usize)>> =
+        unwritten_helper_positions(module, &local_helpers)
+            .into_iter()
+            .map(|(sym, position)| (sym, Some(position)))
+            .collect();
+    helpers.extend(
+        imported_helpers
+            .iter()
+            .filter(|sym| helper_syms.contains(*sym))
+            .map(|sym| (sym.clone(), None)),
+    );
     if helpers.is_empty() {
         return false;
     }
@@ -129,7 +167,7 @@ pub(super) fn name_inlined_factories(module: &mut Module, helper_syms: &HashSet<
 
 /// Position `(item, declarator)` of each helper that one top-level `var`
 /// declarator declares and nothing writes, proven on a resolved clone.
-fn unwritten_helper_positions(
+pub(super) fn unwritten_helper_positions(
     module: &Module,
     helper_syms: &HashSet<Atom>,
 ) -> HashMap<Atom, (usize, usize)> {
@@ -201,7 +239,7 @@ fn unwritten_helper_positions(
 /// the declarators `name = helper(factory)` to place before it.
 fn take_inlined_factories(
     expr: &mut Expr,
-    helpers: &HashMap<Atom, (usize, usize)>,
+    helpers: &HashMap<Atom, Option<(usize, usize)>>,
     position: (usize, usize),
     hint: Option<&Atom>,
     names: &mut FreshNames,
@@ -243,17 +281,25 @@ fn inlined_factory_call(call: &CallExpr) -> Option<(&Ident, &Expr)> {
 
 struct InlineCallFinder<'a> {
     helper_syms: &'a HashSet<Atom>,
-    found: bool,
+    first_only: bool,
+    found: HashSet<Atom>,
+}
+
+impl InlineCallFinder<'_> {
+    fn done(&self) -> bool {
+        self.first_only && !self.found.is_empty()
+    }
 }
 
 impl Visit for InlineCallFinder<'_> {
     fn visit_call_expr(&mut self, call: &CallExpr) {
-        if self.found {
+        if self.done() {
             return;
         }
         if let Some((helper, _)) = inlined_factory_call(call) {
             if self.helper_syms.contains(&helper.sym) {
-                self.found = true;
+                self.found.insert(helper.sym.clone());
+                // The rest of the call is the factory, which runs later.
                 return;
             }
         }
@@ -269,7 +315,7 @@ impl Visit for InlineCallFinder<'_> {
 }
 
 struct InlineCallRewriter<'a> {
-    helpers: &'a HashMap<Atom, (usize, usize)>,
+    helpers: &'a HashMap<Atom, Option<(usize, usize)>>,
     position: (usize, usize),
     hint: Option<&'a Atom>,
     names: &'a mut FreshNames,
@@ -281,7 +327,9 @@ impl VisitMut for InlineCallRewriter<'_> {
         let declared_before = inlined_factory_call(call).is_some_and(|(helper, _)| {
             self.helpers
                 .get(&helper.sym)
-                .is_some_and(|helper_position| *helper_position < self.position)
+                .is_some_and(|helper_position| {
+                    helper_position.is_none_or(|declared| declared < self.position)
+                })
         });
         if !declared_before {
             call.visit_mut_children_with(self);

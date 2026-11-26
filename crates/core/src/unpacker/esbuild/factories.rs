@@ -89,12 +89,15 @@ pub(super) fn collect_helper_syms(module: &Module) -> HashSet<Atom> {
     syms
 }
 
-pub(super) fn has_factory_detection_evidence(module: &Module, helper_syms: &HashSet<Atom>) -> bool {
+pub(super) fn has_factory_detection_evidence(
+    module: &Module,
+    helper_syms: &HashSet<Atom>,
+    commonjs_helper_syms: &HashSet<Atom>,
+) -> bool {
     // Keep this gate aligned with `factory_shape_helper_sym`,
     // `try_extract_factory`, and the `has_factories` acceptance check. The
     // owned detector relies on this being a conservative precondition before
     // it moves factory bodies and unwraps the final detection result.
-    let commonjs_helper_syms = collect_commonjs_helper_syms(module);
     let mut factory_count = 0usize;
     for item in &module.body {
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
@@ -113,7 +116,10 @@ pub(super) fn has_factory_detection_evidence(module: &Module, helper_syms: &Hash
     factory_count >= 5
 }
 
-fn factory_shape_helper_sym(decl: &VarDeclarator, helper_syms: &HashSet<Atom>) -> Option<Atom> {
+pub(super) fn factory_shape_helper_sym(
+    decl: &VarDeclarator,
+    helper_syms: &HashSet<Atom>,
+) -> Option<Atom> {
     // This preflight must stay no broader than both `try_extract_factory` and
     // `take_factory_body`; the owned path treats a collected factory body as
     // movable without another recoverable fallback.

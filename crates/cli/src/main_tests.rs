@@ -2214,6 +2214,58 @@ fn unpack_directory_inputs_are_every_recursive_js_file() {
 }
 
 #[test]
+fn directory_chunk_split_by_an_imported_helper_counts_as_detected() {
+    // The consumer sorts before the runtime chunk it imports `__commonJS` from,
+    // so its receipt is plain; `finish` splits it.
+    let dir = temp_test_dir("unpack-dir-imported-helper");
+    fs::create_dir_all(&dir).expect("create dir");
+    fs::write(
+        dir.join("a-entry.js"),
+        r#"import{b as e}from"./b-runtime.js";var l=e((f,o)=>{o.exports={label:"dir-alpha"}});console.log(l().label);"#,
+    )
+    .expect("write consumer");
+    fs::write(
+        dir.join("b-runtime.js"),
+        "var n=(b,a)=>()=>(a||b((a={exports:{}}).exports,a),a.exports);export{n as b};",
+    )
+    .expect("write runtime");
+
+    let execution = run_public_unpack(
+        std::slice::from_ref(&dir),
+        false,
+        UnpackMode::Auto,
+        DceMode::Off,
+        RewriteLevel::Standard,
+        false,
+        false,
+    )
+    .expect("directory should unpack");
+    assert_eq!(
+        execution.scan_stats,
+        Some(DirectoryScanStats {
+            scanned: 2,
+            detected: 1,
+            refused: 0,
+            plain: 1,
+            skipped: 0,
+        })
+    );
+    let holding = execution
+        .output
+        .modules
+        .iter()
+        .filter(|(_, code)| code.contains("\"dir-alpha\""))
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        matches!(holding.as_slice(), [name] if *name != "a-entry.js"),
+        "{holding:?}"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
 fn unpack_mixed_explicit_and_directory_inputs_processes_plain_explicit_file() {
     let dir = temp_test_dir("unpack-mixed-input-policy");
     let chunks = dir.join("chunks");

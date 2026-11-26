@@ -66,6 +66,16 @@ extraction), and `vue` (experimental standalone SFC recovery). See rustdoc for e
   detection and processing implementation.
 - Return `InputReceipt` from `UnpackJob::push` so detection progress is
   available during intake.
+- Make the receipt provisional for an input that calls a name imported from
+  a relative path the way a lazy-module helper is called: a code-split
+  esbuild/Bun/rolldown chunk imports `__commonJS` and `__esm` from a shared
+  chunk that may be pushed later. `finish` detects such an input again with
+  the helpers its siblings prove, and its `InputReport` is final; it may
+  move from `Plain` or `HeuristicScopeHoisted` to an esbuild/Bun
+  `Structural` split. The input is kept, with its source, under every
+  `UnmatchedInput` policy until then; the policy is applied to its final
+  detection. Rejected: a CLI-only pre-scan before pushing, since API callers
+  that stream inputs would not get the split.
 - Evaluate `UnmatchedInput::Error` at `finish`, preserving operation-level
   failure semantics while keeping the job usable after every successful push.
 - Keep a bundle whose split a detector refused as `InputDetection::Plain`
@@ -150,7 +160,9 @@ filename or sentinel string for a later adapter to decode.
 
 ### Performance invariants
 
-1. Each physical input is detected at most once per `unpack` call.
+1. Each physical input is detected at most once per `unpack` call, except an
+   input whose receipt is provisional: `finish` detects it once more when a
+   sibling proves the lazy-module helpers it imports.
 2. A compatible plain JavaScript input is parsed at most once before rules.
 3. A prepared module is not emitted and reparsed before the rule pipeline.
 4. `UnmatchedInput::Skip` and `SkipUnrecognized` do not require a separate
@@ -158,7 +170,8 @@ filename or sentinel string for a later adapter to decode.
 5. `UnpackJob::push` releases a skipped candidate's source before accepting
    the next candidate. Peak intake memory is therefore bounded by retained
    detected/processed inputs rather than every file visited by a directory
-   walk.
+   walk. A candidate with a provisional receipt keeps its source until
+   `finish`.
 6. Text is materialized only for final output, explicit raw output, or a
    recovery fallback.
 7. Source-map modes may take an explicitly slower path when source-coordinate

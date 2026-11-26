@@ -40,7 +40,11 @@ fn assert_owned_factory_detector_matches_borrowed(
         "fixture must exercise the intended evidence path"
     );
     assert!(
-        has_factory_detection_evidence(&module, &helper_syms),
+        has_factory_detection_evidence(
+            &module,
+            &helper_syms,
+            &collect_commonjs_helper_syms(&module)
+        ),
         "fixture must pass the owned detector's preflight"
     );
 
@@ -1089,8 +1093,11 @@ fn inlined_factory_is_named_only_from_an_unwritten_helper_declared_before_it() {
             let mut module =
                 super::super::parse_es_module(&source, "inline.js", cm.clone()).unwrap();
             let helper_syms = collect_helper_syms(&module);
-            let changed =
-                super::inline_factories::name_inlined_factories(&mut module, &helper_syms);
+            let changed = super::inline_factories::name_inlined_factories(
+                &mut module,
+                &helper_syms,
+                &Default::default(),
+            );
             (changed, emit_module_raw(&module, cm).unwrap())
         })
     };

@@ -122,6 +122,9 @@ pub(crate) fn diagnostic_from_core(
             DiagnosticCode::EsSourceKeptCommonJs
         }
         wakaru_core::UnpackWarningKind::MissingImportedName => DiagnosticCode::MissingImportedName,
+        wakaru_core::UnpackWarningKind::LazyHelperImportUnresolved => {
+            DiagnosticCode::LazyHelperImportUnresolved
+        }
         wakaru_core::UnpackWarningKind::OutputParseRecovered => {
             DiagnosticCode::OutputParseRecovered
         }

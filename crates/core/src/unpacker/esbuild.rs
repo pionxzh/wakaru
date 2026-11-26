@@ -15,6 +15,7 @@ mod bindings;
 mod emit;
 mod factories;
 mod glob_import;
+pub(crate) mod imported_helpers;
 mod inline_factories;
 mod lazy_import;
 mod ownership;
@@ -39,6 +40,7 @@ use factories::{
     item_has_helper_factory_declarator, locally_exported_atoms, Factory, FactoryBodyRef,
     PathCommentHints,
 };
+use imported_helpers::imported_helper_syms;
 use inline_factories::{has_inlined_factory_calls, name_inlined_factories};
 use lazy_import::{plan_lazy_imports, LazyImportPlan};
 use ownership::{
@@ -66,6 +68,11 @@ pub(super) fn detect_from_module_with_source(
         let _enter = span.enter();
         collect_helper_syms(module)
     };
+    // Helpers this input imports from another input that proved them (see
+    // `imported_helpers`); empty unless the driver links inputs.
+    let imported = imported_helper_syms(module);
+    let mut helper_syms = helper_syms;
+    helper_syms.extend(imported.all.iter().cloned());
 
     let has_export_helper_shape = detect_export_helper(&module.body).is_some();
 
@@ -79,7 +86,7 @@ pub(super) fn detect_from_module_with_source(
     // already removed them (see `unwrap_parenthesized_function_args`).
     let normalized_module = has_inlined_factory_calls(module, &helper_syms).then(|| {
         let mut normalized = module.clone();
-        name_inlined_factories(&mut normalized, &helper_syms);
+        name_inlined_factories(&mut normalized, &helper_syms, &imported.all);
         normalized
     });
     let module = normalized_module.as_ref().unwrap_or(module);
@@ -94,7 +101,8 @@ pub(super) fn detect_from_module_with_source(
         am
     };
 
-    let commonjs_helper_syms = collect_commonjs_helper_syms(module);
+    let mut commonjs_helper_syms = collect_commonjs_helper_syms(module);
+    commonjs_helper_syms.extend(imported.commonjs);
     let filename_hints = source.map(|source| {
         let source_file = cm.lookup_source_file(module.span.lo);
         PathCommentHints::new(source, source_file.start_pos.0)
@@ -157,13 +165,19 @@ pub(super) fn detect_from_owned_factory_module_with_source(
     cm: Lrc<SourceMap>,
     positions: SourcePositions,
 ) -> Result<UnpackResult, Module> {
-    let helper_syms = collect_helper_syms(&module);
+    let imported = imported_helper_syms(&module);
+    let mut helper_syms = collect_helper_syms(&module);
+    helper_syms.extend(imported.all);
+    let mut commonjs_helper_syms = collect_commonjs_helper_syms(&module);
+    commonjs_helper_syms.extend(imported.commonjs);
     // Naming an inlined factory may not lead to a split; the borrowed
     // detector does it on a copy, so the candidate goes back unchanged.
     if has_inlined_factory_calls(&module, &helper_syms) {
         return Err(module);
     }
-    if helper_syms.is_empty() || !has_factory_detection_evidence(&module, &helper_syms) {
+    if helper_syms.is_empty()
+        || !has_factory_detection_evidence(&module, &helper_syms, &commonjs_helper_syms)
+    {
         return Err(module);
     }
 
@@ -175,7 +189,6 @@ pub(super) fn detect_from_owned_factory_module_with_source(
         analysis.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
         analysis
     };
-    let commonjs_helper_syms = collect_commonjs_helper_syms(&module);
     let filename_hints = source.map(|source| {
         let source_file = cm.lookup_source_file(module.span.lo);
         PathCommentHints::new(source, source_file.start_pos.0)

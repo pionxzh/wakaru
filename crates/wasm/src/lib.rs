@@ -278,6 +278,7 @@ export type WakaruWarningKind =
     | "commonjs_exports_escape"
     | "es_source_kept_commonjs"
     | "missing_imported_name"
+    | "lazy_helper_import_unresolved"
     | "output_parse_recovered"
     | "output_parse_failed"
     | "formatter_failed";
@@ -393,6 +394,10 @@ mod tests {
             (
                 wakaru::DiagnosticCode::MissingImportedName,
                 "missing_imported_name",
+            ),
+            (
+                wakaru::DiagnosticCode::LazyHelperImportUnresolved,
+                "lazy_helper_import_unresolved",
             ),
             (
                 wakaru::DiagnosticCode::OutputParseRecovered,

@@ -24,8 +24,10 @@ use crate::source::Source;
 /// This function is semantically equivalent to pushing the sources into one
 /// [`UnpackJob`] in order and finishing it; the contract does not require a
 /// literally serial push loop. Each physical input is detected at most once
-/// per call, and a compatible plain JavaScript input is parsed at most once
-/// before rules.
+/// per call, except that an input which imports esbuild/Bun/rolldown
+/// lazy-module helpers (`__commonJS`, `__esm`) from another input is detected
+/// once more when that input proves them (see [`UnpackJob::push`]). A
+/// compatible plain JavaScript input is parsed at most once before rules.
 pub fn unpack(inputs: Vec<Source>, options: UnpackOptions) -> Result<UnpackOutput> {
     let mut job = UnpackJob::new(options)?;
     for input in inputs {
@@ -41,18 +43,25 @@ pub fn unpack(inputs: Vec<Source>, options: UnpackOptions) -> Result<UnpackOutpu
 /// skipped plain input's source is released before `push` returns, so peak
 /// intake memory is bounded by retained detected/processed inputs rather
 /// than every file visited by a walk. No separate boolean detection preflight
-/// is needed.
+/// is needed. The one exception is an input whose detection is provisional
+/// (see [`push`](UnpackJob::push)): it keeps its source until `finish`.
 pub struct UnpackJob {
     options: UnpackOptions,
     reports: Vec<InputReport>,
     retained: Vec<RetainedInput>,
-    unmatched_error: Option<String>,
+    /// The first input, by ID, that violates [`UnmatchedInput::Error`].
+    unmatched_error: Option<(InputId, String)>,
+    /// Lazy-helper exports of every pushed input, retained or not.
+    helper_exports: Vec<wakaru_core::driver::InputHelperExports>,
 }
 
 struct RetainedInput {
     id: InputId,
     prepared: wakaru_core::driver::PreparedUnpackInput,
     preserve: bool,
+    /// The plain-input policy of an input whose detection `finish` may
+    /// change; its push action stands only if detection does not change.
+    provisional: Option<UnmatchedInput>,
 }
 
 impl std::fmt::Debug for UnpackJob {
@@ -86,6 +95,7 @@ impl UnpackJob {
             reports: Vec::new(),
             retained: Vec::new(),
             unmatched_error: None,
+            helper_exports: Vec::new(),
         })
     }
 
@@ -95,6 +105,23 @@ impl UnpackJob {
     /// A failed push does not add an input or consume an [`InputId`]; the job
     /// remains usable. A successful push returns the assigned ID and
     /// detection result so a walker can report progress before `finish`.
+    ///
+    /// The receipt is provisional for an input that calls a name it imports
+    /// from a relative path the way a lazy-module helper is called (`var x =
+    /// name(factory)`): with code splitting, esbuild, Bun, and rolldown import
+    /// `__commonJS` and `__esm` from a shared chunk. Such an input is kept,
+    /// with its source, whatever the plain-input policy, and
+    /// [`finish`](UnpackJob::finish) detects it again once every input is
+    /// known, treating the names it imports from another input's proven
+    /// helper exports as helpers. It may then move from
+    /// [`InputDetection::Plain`] or [`InputDetection::HeuristicScopeHoisted`]
+    /// to an esbuild/Bun [`InputDetection::Structural`] split; the
+    /// [`InputReport`] in the output is final. When the detection does not
+    /// change, the input gets the action its receipt implied, and a skipped
+    /// one is released at `finish`. An import whose path names no pushed input
+    /// gets a
+    /// [`DiagnosticCode::LazyHelperImportUnresolved`](crate::DiagnosticCode::LazyHelperImportUnresolved)
+    /// warning.
     pub fn push(&mut self, input: Source) -> Result<InputReceipt> {
         self.push_with_unmatched(input, self.options.unmatched())
     }
@@ -134,6 +161,7 @@ impl UnpackJob {
         let detection = map_prepared_detection(prepared.detection());
         let refusal = prepared.refusal().and_then(map_split_refusal);
         let id = InputId::from_index(self.reports.len());
+        let provisional = prepared.awaits_helper_link().then_some(unmatched);
         let (action, retain, preserve) = match detection {
             InputDetection::Structural(_) | InputDetection::HeuristicScopeHoisted => {
                 (InputAction::Unpacked, true, false)
@@ -148,8 +176,10 @@ impl UnpackJob {
                 }
                 UnmatchedInput::Preserve => (InputAction::Preserved, true, true),
                 UnmatchedInput::Error => {
-                    self.unmatched_error
-                        .get_or_insert_with(|| prepared.filename().to_string());
+                    // A provisional input is judged at `finish`.
+                    if provisional.is_none() {
+                        self.record_unmatched_error(id, prepared.filename());
+                    }
                     (InputAction::Processed, false, false)
                 }
             },
@@ -163,11 +193,13 @@ impl UnpackJob {
             action,
             module_indices: Vec::new(),
         });
-        if retain {
+        self.helper_exports.push(prepared.helper_exports());
+        if retain || provisional.is_some() {
             self.retained.push(RetainedInput {
                 id,
                 prepared,
                 preserve,
+                provisional,
             });
         }
 
@@ -187,6 +219,10 @@ impl UnpackJob {
     /// [`UnmatchedInput::Error`] policy was violated by any pushed input,
     /// this returns `ErrorKind::InvalidInput`. All output ordering is
     /// deterministic regardless of thread scheduling.
+    ///
+    /// An input whose push receipt was provisional is detected again here
+    /// first (see [`push`](UnpackJob::push)); the policy is applied to its
+    /// final detection.
     pub fn finish(mut self) -> Result<UnpackOutput> {
         if self.reports.is_empty() {
             return Err(Error::new(
@@ -195,7 +231,8 @@ impl UnpackJob {
                 anyhow!("at least one input is required"),
             ));
         }
-        if let Some(filename) = self.unmatched_error {
+        let link_diagnostics = self.link_imported_lazy_helpers()?;
+        if let Some((_, filename)) = self.unmatched_error {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
                 Some(filename.clone()),
@@ -230,6 +267,7 @@ impl UnpackJob {
             modules = converted.modules;
             diagnostics = converted.diagnostics;
         }
+        diagnostics.splice(0..0, link_diagnostics);
 
         append_preserved_modules(&mut modules, &mut self.reports, preserved);
         ensure_module_filenames_are_safe(&modules)?;
@@ -244,6 +282,74 @@ impl UnpackJob {
                 OutputSafety::Normal
             },
         })
+    }
+
+    fn record_unmatched_error(&mut self, id: InputId, filename: &str) {
+        if self
+            .unmatched_error
+            .as_ref()
+            .is_none_or(|(first, _)| id.get() < first.get())
+        {
+            self.unmatched_error = Some((id, filename.to_string()));
+        }
+    }
+
+    /// Detects every provisional input again with the helpers other inputs
+    /// prove, settles its report and retention, and returns the warnings for
+    /// helper imports that name no input.
+    fn link_imported_lazy_helpers(&mut self) -> Result<Vec<Diagnostic>> {
+        let mut diagnostics = Vec::new();
+        if self
+            .retained
+            .iter()
+            .all(|input| input.provisional.is_none())
+        {
+            return Ok(diagnostics);
+        }
+        let exports = std::mem::take(&mut self.helper_exports);
+        let mut kept = Vec::with_capacity(self.retained.len());
+        for mut input in std::mem::take(&mut self.retained) {
+            let Some(unmatched) = input.provisional.take() else {
+                kept.push(input);
+                continue;
+            };
+            let warnings =
+                wakaru_core::driver::link_imported_lazy_helpers(&mut input.prepared, &exports)
+                    .map_err(|error| {
+                        Error::new(
+                            from_core_driver_error(error.kind()),
+                            Some(input.prepared.filename().to_string()),
+                            error.into_inner(),
+                        )
+                    })?;
+            diagnostics.extend(warnings.into_iter().map(|warning| {
+                let mut diagnostic = diagnostic_from_core(warning, None);
+                diagnostic.input = Some(input.id);
+                diagnostic
+            }));
+
+            let detection = map_prepared_detection(input.prepared.detection());
+            let report = &mut self.reports[input.id.get() as usize];
+            if detection != report.detection {
+                // Only an esbuild/Bun split replaces the first detection.
+                report.detection = detection;
+                report.refusal = input.prepared.refusal().and_then(map_split_refusal);
+                report.action = InputAction::Unpacked;
+                input.preserve = false;
+                kept.push(input);
+                continue;
+            }
+            // The first detection stands, and with it the push action.
+            if detection == InputDetection::Plain && unmatched == UnmatchedInput::Error {
+                self.record_unmatched_error(input.id, input.prepared.filename());
+                continue;
+            }
+            if report.action != InputAction::Skipped {
+                kept.push(input);
+            }
+        }
+        self.retained = kept;
+        Ok(diagnostics)
     }
 }
 
@@ -861,6 +967,98 @@ function greeting(){return "hello"}"#;
         assert_eq!(output.inputs[1].action, InputAction::Skipped);
         assert_eq!(output.modules.len(), 1);
         assert!(output.modules[0].code.contains("greeting"));
+    }
+
+    /// A code-split chunk declaring `__commonJS` (`b`) and the chunk that
+    /// imports it.
+    const SPLIT_RUNTIME: &str =
+        "var n=(b,a)=>()=>(a||b((a={exports:{}}).exports,a),a.exports);export{n as b};\n";
+    const SPLIT_CONSUMER: &str = r#"import{b as e}from"./runtime.js";var l=e((f,o)=>{o.exports={label:"split-alpha"}});var s=e((f,o)=>{o.exports=l().label+"-beta"});console.log(s());
+"#;
+
+    #[test]
+    fn imported_helper_split_is_final_at_finish_under_every_plain_policy() {
+        for policy in [
+            UnmatchedInput::Skip,
+            UnmatchedInput::SkipUnrecognized,
+            UnmatchedInput::Process,
+            UnmatchedInput::Preserve,
+            UnmatchedInput::Error,
+        ] {
+            let mut job =
+                UnpackJob::new(UnpackOptions::default()).expect("options should be valid");
+            // The consumer arrives first, before the runtime it imports from.
+            let consumer = job
+                .push_with_unmatched(Source::new("entry.js", SPLIT_CONSUMER), policy)
+                .expect("consumer should be accepted");
+            assert_eq!(consumer.detection, InputDetection::Plain, "{policy:?}");
+            job.push_with_unmatched(
+                Source::new("runtime.js", SPLIT_RUNTIME),
+                UnmatchedInput::Process,
+            )
+            .expect("runtime should be accepted");
+
+            let output = job.finish().expect("job should finish");
+            let report = &output.inputs[0];
+            assert_eq!(
+                report.detection,
+                InputDetection::Structural(BundleFormat::Esbuild),
+                "{policy:?}"
+            );
+            assert_eq!(report.action, InputAction::Unpacked, "{policy:?}");
+            let alpha = output
+                .modules
+                .iter()
+                .filter(|module| module.code.contains("\"split-alpha\""))
+                .collect::<Vec<_>>();
+            assert!(
+                matches!(alpha.as_slice(), [module] if module.filename != "entry.js"),
+                "{policy:?}: {:?}",
+                output.modules
+            );
+            assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        }
+    }
+
+    #[test]
+    fn unlinked_helper_import_keeps_the_push_action_and_warns() {
+        for (policy, action) in [
+            (UnmatchedInput::Skip, InputAction::Skipped),
+            (UnmatchedInput::Process, InputAction::Processed),
+            (UnmatchedInput::Preserve, InputAction::Preserved),
+        ] {
+            let mut job =
+                UnpackJob::new(UnpackOptions::default()).expect("options should be valid");
+            job.push_with_unmatched(Source::new("entry.js", SPLIT_CONSUMER), policy)
+                .expect("consumer should be accepted");
+            let output = job.finish().expect("job should finish");
+            assert_eq!(output.inputs[0].detection, InputDetection::Plain);
+            assert_eq!(output.inputs[0].action, action, "{policy:?}");
+            assert_eq!(
+                output.modules.len(),
+                usize::from(action != InputAction::Skipped),
+                "{policy:?}"
+            );
+            assert!(
+                matches!(output.diagnostics.as_slice(), [diagnostic]
+                    if diagnostic.code == crate::DiagnosticCode::LazyHelperImportUnresolved
+                        && diagnostic.severity == crate::DiagnosticSeverity::Warning
+                        && diagnostic.input == Some(output.inputs[0].id)
+                        && diagnostic.message.contains("\"./runtime.js\"")),
+                "{policy:?}: {:?}",
+                output.diagnostics
+            );
+        }
+
+        let mut job =
+            UnpackJob::new(UnpackOptions::default().with_unmatched(UnmatchedInput::Error))
+                .expect("options should be valid");
+        job.push(Source::new("entry.js", SPLIT_CONSUMER))
+            .expect("consumer should be accepted");
+        let error = job
+            .finish()
+            .expect_err("an unlinked plain input still fails");
+        assert_eq!(error.kind(), ErrorKind::InvalidInput);
     }
 
     #[test]

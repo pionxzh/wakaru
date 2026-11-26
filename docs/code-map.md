@@ -40,6 +40,7 @@ crates/
           webpack_commonjs_runtime.rs — detector-proven runtime normalization
           dead_module.rs            — dead-module elimination
           link_check.rs             — missing_imported_name: imports a sibling ESM output does not export
+          helper_link.rs            — detect an input again with the lazy-module helpers it imports from another input
           filename_recovery.rs      — recovered module names
           interop_report.rs         — `debug interop` report (each module's provider interface and require edges)
         trace.rs                    — rule trace orchestration and formatting
@@ -102,6 +103,8 @@ crates/
         esbuild.rs                  — esbuild/Bun splitter entry points + detection orchestration
         esbuild/
           factories.rs              — lazy-module helper detection, factory collection
+          imported_helpers.rs       — helper exports one input proves, factory-position imports of another
+          inline_factories.rs       — a factory inlined into its only call gets its own declarator
           glob_import.rs            — `__glob` maps of lazy-only modules collapsed back into `import()` of the template
           lazy_import.rs            — modules reached only through a lowered `import()`: inlined as plain modules, loaders rewritten
           scope.rs                  — scope-hoisted module extraction

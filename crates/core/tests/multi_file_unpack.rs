@@ -5844,3 +5844,233 @@ fn webpack5_runtime_id_fold_ignores_j_on_other_bindings() {
         output.warnings
     );
 }
+
+// Code splitting: esbuild, Bun, and rolldown declare the lazy-module helpers
+// in a shared chunk that every other chunk imports.
+const SPLIT_RUNTIME_OBJECT_HELPERS: &str = r#"var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
+export { __esm, __commonJS };
+"#;
+
+const SPLIT_CONSUMER_OBJECT_FACTORIES: &str = r#"import { __commonJS } from "./chunk-runtime.js";
+var require_alpha = __commonJS({
+  "src/alpha.js"(exports, module) {
+    module.exports = { label: "alpha-provider" };
+  }
+});
+var require_beta = __commonJS({
+  "src/beta.js"(exports, module) {
+    module.exports = { label: require_alpha().label + "-beta-provider" };
+  }
+});
+console.log(require_beta().label);
+"#;
+
+// `a` is `__esm`, `b` `__commonJS`, `c` rolldown's `__esmMin`; `d` is no
+// helper.
+const SPLIT_RUNTIME_MINIFIED: &str = "var m=(b,a)=>()=>(b&&(a=b(b=0)),a),n=(b,a)=>()=>(a||b((a={exports:{}}).exports,a),a.exports),q=(e,t,n)=>()=>{if(n)throw n[0];try{return e&&(t=e(e=0)),t}catch(e){throw n=[e],e}},w=b=>({default:b});export{m as a,n as b,q as c,w as d};\n";
+
+const SPLIT_CONSUMER_MINIFIED: &str = r#"import{b as e}from"./chunk-runtime.js";var l=e((f,o)=>{o.exports={label:"minified-alpha-provider"}});var s=e((f,o)=>{o.exports={label:l().label+"-beta"}});console.log(s().label);
+"#;
+
+fn split_inputs(files: &[(&str, &str)]) -> Vec<UnpackInput> {
+    files
+        .iter()
+        .map(|(filename, source)| UnpackInput {
+            filename: filename.to_string(),
+            source: source.to_string(),
+        })
+        .collect()
+}
+
+/// The one module whose code holds `needle`.
+fn module_holding<'a>(modules: &'a [(String, String)], needle: &str) -> &'a (String, String) {
+    let holding: Vec<_> = modules
+        .iter()
+        .filter(|(_, code)| code.contains(needle))
+        .collect();
+    match holding.as_slice() {
+        [only] => only,
+        _ => panic!("expected one module holding {needle:?}: {modules:#?}"),
+    }
+}
+
+fn lazy_helper_warnings(output: &wakaru_core::driver::test_support::UnpackOutput) -> Vec<String> {
+    output
+        .warnings
+        .iter()
+        .filter(|warning| {
+            warning.kind == wakaru_core::UnpackWarningKind::LazyHelperImportUnresolved
+        })
+        .map(|warning| format!("{}: {}", warning.filename, warning.message))
+        .collect()
+}
+
+#[test]
+fn factories_wrapped_by_a_helper_imported_from_another_input_split() {
+    for (runtime, consumer, providers) in [
+        (
+            SPLIT_RUNTIME_OBJECT_HELPERS,
+            SPLIT_CONSUMER_OBJECT_FACTORIES,
+            ["\"alpha-provider\"", "-beta-provider"],
+        ),
+        (
+            SPLIT_RUNTIME_MINIFIED,
+            SPLIT_CONSUMER_MINIFIED,
+            ["\"minified-alpha-provider\"", "}-beta"],
+        ),
+    ] {
+        // The consumer may arrive before or after the chunk it imports from.
+        for files in [
+            [("entry.js", consumer), ("chunk-runtime.js", runtime)],
+            [("chunk-runtime.js", runtime), ("entry.js", consumer)],
+        ] {
+            let output = unpack_files(split_inputs(&files), DecompileOptions::default())
+                .expect("split chunks should unpack");
+            assert!(
+                output
+                    .detected_formats
+                    .contains(&wakaru_core::BundleFormat::Esbuild),
+                "{:?}",
+                output.detected_formats
+            );
+            let (alpha, _) = module_holding(&output.modules, providers[0]);
+            let (beta, _) = module_holding(&output.modules, providers[1]);
+            assert!(
+                alpha != beta && alpha != "entry.js" && beta != "entry.js",
+                "{:#?}",
+                output.modules
+            );
+            let entry = module_code(&output.modules, "entry.js");
+            assert!(entry.contains("chunk-runtime.js"), "{entry}");
+            assert_valid_module_graph(&output.modules);
+            assert!(lazy_helper_warnings(&output).is_empty());
+        }
+    }
+}
+
+#[test]
+fn imported_esm_initializers_split_beside_commonjs_factories() {
+    for helper in ["a", "c"] {
+        let consumer = format!(
+            "import{{b as r,{helper} as t}}from\"./chunk-runtime.js\";var a;var i=t(()=>{{a={{label:\"esm-init-provider\"}}}});var s=r((e,o)=>{{i(),o.exports=a.label}});console.log(s());\n"
+        );
+        let output = unpack_files(
+            split_inputs(&[
+                ("entry.js", &consumer),
+                ("chunk-runtime.js", SPLIT_RUNTIME_MINIFIED),
+            ]),
+            DecompileOptions::default(),
+        )
+        .expect("split chunks should unpack");
+        let (init, code) = module_holding(&output.modules, "\"esm-init-provider\"");
+        assert!(
+            init != "entry.js",
+            "the initializer stays in the entry: {code}"
+        );
+        assert_valid_module_graph(&output.modules);
+    }
+}
+
+#[test]
+fn inlined_factory_wrapped_by_an_imported_helper_becomes_its_own_module() {
+    // rolldown's minifier inlines a factory used once into the call that
+    // runs it.
+    let consumer = r#"import{b as o,d as l}from"./chunk-runtime.js";var c=l(o((e,t)=>{t.exports={label:"inlined-imported-provider"}})());console.log(c.default.label);
+"#;
+    let output = unpack_files(
+        split_inputs(&[
+            ("entry.js", consumer),
+            ("chunk-runtime.js", SPLIT_RUNTIME_MINIFIED),
+        ]),
+        DecompileOptions::default(),
+    )
+    .expect("split chunks should unpack");
+    let (provider, _) = module_holding(&output.modules, "\"inlined-imported-provider\"");
+    assert!(provider.ends_with("require_c.js"), "{provider}");
+    let entry = module_code(&output.modules, "entry.js");
+    assert!(entry.contains("require_c()"), "{entry}");
+    assert_valid_module_graph(&output.modules);
+}
+
+#[test]
+fn helper_import_without_its_input_is_not_split_and_warns() {
+    for consumer in [SPLIT_CONSUMER_OBJECT_FACTORIES, SPLIT_CONSUMER_MINIFIED] {
+        let output = unpack_files(
+            split_inputs(&[("entry.js", consumer)]),
+            DecompileOptions::default(),
+        )
+        .expect("a lone consumer should unpack");
+        assert!(
+            output.detected_formats.is_empty(),
+            "{:?}",
+            output.detected_formats
+        );
+        assert_eq!(output.modules.len(), 1, "{:?}", output.modules);
+        let warnings = lazy_helper_warnings(&output);
+        assert!(
+            matches!(warnings.as_slice(), [warning]
+                if warning.starts_with("entry.js: ") && warning.contains("\"./chunk-runtime.js\"")),
+            "{warnings:?}"
+        );
+        assert!(!output.has_errors());
+    }
+}
+
+#[test]
+fn imported_name_that_no_input_proves_a_helper_is_not_split() {
+    let runtimes = [
+        // The exporter writes the helper binding after declaring it: an
+        // export is a live binding, so the importer may call another value.
+        "var n=(b,a)=>()=>(a||b((a={exports:{}}).exports,a),a.exports);globalThis.swap=()=>{n=b=>b};export{n as b};\n",
+        // The export has the call shape but is no lazy helper.
+        "function n(b){return b}export{n as b};\n",
+        // The exporter does not export that name.
+        "var n=(b,a)=>()=>(a||b((a={exports:{}}).exports,a),a.exports);export{n as z};\n",
+    ];
+    for runtime in runtimes {
+        let output = unpack_files(
+            split_inputs(&[
+                ("entry.js", SPLIT_CONSUMER_MINIFIED),
+                ("chunk-runtime.js", runtime),
+            ]),
+            DecompileOptions::default(),
+        )
+        .expect("split chunks should unpack");
+        assert!(
+            !output
+                .detected_formats
+                .contains(&wakaru_core::BundleFormat::Esbuild),
+            "split on an unproven helper:\n{runtime}\n{:?}",
+            output.modules
+        );
+        let entry = module_code(&output.modules, "entry.js");
+        assert!(entry.contains("minified-alpha-provider"), "{entry}");
+        // The import resolved, so there is nothing to warn about.
+        assert!(lazy_helper_warnings(&output).is_empty());
+    }
+}
+
+#[test]
+fn helper_import_from_another_directory_resolves_against_the_importer() {
+    let consumer =
+        SPLIT_CONSUMER_MINIFIED.replace("./chunk-runtime.js", "../shared/chunk-runtime.js");
+    let output = unpack_files(
+        split_inputs(&[
+            ("dist/pages/entry.js", &consumer),
+            ("dist/shared/chunk-runtime.js", SPLIT_RUNTIME_MINIFIED),
+        ]),
+        DecompileOptions::default(),
+    )
+    .expect("split chunks should unpack");
+    assert!(output
+        .detected_formats
+        .contains(&wakaru_core::BundleFormat::Esbuild));
+    module_holding(&output.modules, "\"minified-alpha-provider\"");
+    assert_valid_module_graph(&output.modules);
+}

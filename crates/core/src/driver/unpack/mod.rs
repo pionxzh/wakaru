@@ -22,11 +22,14 @@ use crate::rules::{
 pub use crate::unpacker::refusal::{SplitRefusal, SplitRefusalReason};
 use crate::unpacker::{
     scope_hoist, try_prepare_bundle, try_prepare_source, BundleFormat, DetectedBundle,
-    PreparedModuleAst, PreparedSource, SourcePositions, UnpackResult, UnpackedModule,
+    LazyHelperKind, LazyHelperLinkFacts, PreparedModuleAst, PreparedSource, SourcePositions,
+    UnpackResult, UnpackedModule,
 };
+pub use helper_link::{link_imported_lazy_helpers, InputHelperExports};
 
 mod dead_module;
 mod filename_recovery;
+mod helper_link;
 mod interop_report;
 mod link_check;
 mod merge;
@@ -105,6 +108,12 @@ pub struct PreparedUnpackInput {
     /// Set on a plain input when a detector matched its format and then
     /// refused to split it.
     refusal: Option<SplitRefusal>,
+    /// Exports this input proves to be lazy-factory helpers (see
+    /// [`helper_link`]).
+    lazy_helper_exports: Vec<(String, LazyHelperKind)>,
+    /// Set while this input calls a name imported from a relative path in
+    /// factory position and waits for [`link_imported_lazy_helpers`].
+    helper_link: Option<Box<helper_link::PendingHelperLink>>,
 }
 
 impl PreparedUnpackInput {
@@ -120,6 +129,23 @@ impl PreparedUnpackInput {
     /// split it. `None` for a bundle, and for an input no detector matched.
     pub fn refusal(&self) -> Option<SplitRefusal> {
         self.refusal
+    }
+
+    /// This input's proven lazy-helper exports, for a caller to keep when it
+    /// does not retain the input itself.
+    pub fn helper_exports(&self) -> InputHelperExports {
+        InputHelperExports {
+            filename: self.filename.clone(),
+            exports: self.lazy_helper_exports.clone(),
+        }
+    }
+
+    /// Whether this input's detection is provisional: it calls a name imported
+    /// from a relative path in factory position, and
+    /// [`link_imported_lazy_helpers`] may detect it again. It keeps its
+    /// source until then.
+    pub fn awaits_helper_link(&self) -> bool {
+        self.helper_link.is_some()
     }
 
     pub fn into_plain_source(self) -> Option<(String, String)> {
@@ -158,11 +184,50 @@ pub fn prepare_unpack_input_with_policy(
     scope_hoist_policy: ScopeHoistPolicy,
     output_source_maps: bool,
 ) -> DriverResult<PreparedUnpackInput> {
+    let mut link = None;
+    let mut input = prepare_detected_input(
+        filename,
+        source,
+        prepare_plain_ast,
+        scope_hoist_policy,
+        output_source_maps,
+        &mut link,
+    )?;
+    if let Some((facts, link_source)) = link {
+        helper_link::attach(
+            &mut input,
+            facts,
+            link_source,
+            helper_link::PrepareSettings {
+                prepare_plain_ast,
+                scope_hoist_policy,
+                output_source_maps,
+            },
+        );
+    }
+    Ok(input)
+}
+
+/// [`prepare_unpack_input_with_policy`] before the lazy-helper link facts
+/// are attached. `link` receives the facts read during detection, with a copy
+/// of the source when the input may be detected again.
+fn prepare_detected_input(
+    filename: String,
+    source: String,
+    prepare_plain_ast: bool,
+    scope_hoist_policy: ScopeHoistPolicy,
+    output_source_maps: bool,
+    link: &mut Option<(LazyHelperLinkFacts, Option<String>)>,
+) -> DriverResult<PreparedUnpackInput> {
     let positions = SourcePositions::from_output_source_maps(output_source_maps);
     let origin = output_source_maps
         .then(|| Arc::new(source_index::InputOrigin::new(filename.clone(), &source)));
     let prepared = match try_prepare_source(&source, &filename, prepare_plain_ast, positions) {
-        Ok(prepared) => prepared,
+        Ok((prepared, facts)) => {
+            let link_source = (!facts.factory_imports.is_empty()).then(|| source.clone());
+            *link = Some((facts, link_source));
+            prepared
+        }
         Err(bundle_parse_error) => {
             // Bundle detection deliberately uses the ES/JSX grammar. Preserve
             // filename-driven syntax (for example TypeScript) as a valid plain
@@ -183,6 +248,8 @@ pub fn prepare_unpack_input_with_policy(
                         public_path_candidate: false,
                         origin,
                         refusal: None,
+                        lazy_helper_exports: Vec::new(),
+                        helper_link: None,
                     });
                 }
                 Err(input_parse_error) => {
@@ -224,6 +291,8 @@ pub fn prepare_unpack_input_with_policy(
                 public_path_candidate,
                 origin,
                 refusal: None,
+                lazy_helper_exports: Vec::new(),
+                helper_link: None,
             });
         }
         PreparedSource::Plain { prepared, refusal } => (prepared, refusal),
@@ -275,6 +344,8 @@ pub fn prepare_unpack_input_with_policy(
                 public_path_candidate: true,
                 origin,
                 refusal: None,
+                lazy_helper_exports: Vec::new(),
+                helper_link: None,
             });
         }
     }
@@ -289,6 +360,8 @@ pub fn prepare_unpack_input_with_policy(
         public_path_candidate: false,
         origin,
         refusal,
+        lazy_helper_exports: Vec::new(),
+        helper_link: None,
     })
 }
 
@@ -495,6 +568,8 @@ fn unpack_prepared_inputs_impl(
             public_path_candidate: _,
             origin,
             refusal: _,
+            lazy_helper_exports: _,
+            helper_link: _,
         } = input;
         origins.push(origin);
         match detection {
@@ -821,7 +896,7 @@ fn unpack_legacy_inputs(
     if single_input {
         options.filename = input_names[0].clone();
     }
-    let prepared = inputs
+    let mut prepared = inputs
         .into_iter()
         .map(|input| {
             prepare_unpack_input_with_policy(
@@ -838,6 +913,16 @@ fn unpack_legacy_inputs(
             .map_err(DriverError::into_inner)
         })
         .collect::<Result<Vec<_>>>()?;
+    let helper_exports = prepared
+        .iter()
+        .map(PreparedUnpackInput::helper_exports)
+        .collect::<Vec<_>>();
+    let mut link_warnings = Vec::new();
+    for input in &mut prepared {
+        link_warnings.extend(
+            link_imported_lazy_helpers(input, &helper_exports).map_err(DriverError::into_inner)?,
+        );
+    }
     let plain_single = single_input && prepared[0].detection() == PreparedInputDetection::Plain;
     let prepared_output = unpack_prepared_inputs(
         prepared,
@@ -846,6 +931,7 @@ fn unpack_legacy_inputs(
         nested_scope_split_enabled(&options),
     )?;
     let mut output = into_legacy_unpack_output(prepared_output, &input_names, single_input);
+    output.warnings.splice(0..0, link_warnings);
     if plain_single {
         let emitted_name = output.modules[0].0.clone();
         output.modules[0].0 = "module.js".to_string();

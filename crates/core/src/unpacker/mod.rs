@@ -1221,6 +1221,10 @@ impl UnpackResult {
 pub(crate) use crate::analysis::BindingId;
 
 pub(crate) use crate::driver::sanitize_relative_path;
+pub(crate) use esbuild::imported_helpers::{
+    with_imported_helpers, FactoryPositionImport, ImportedLazyHelpers, LazyHelperKind,
+    LazyHelperLinkFacts,
+};
 
 pub fn unpack_bundle(source: &str) -> Option<UnpackResult> {
     try_unpack_bundle(source).ok().flatten()
@@ -1274,12 +1278,16 @@ pub(crate) fn try_prepare_bundle(
 /// A plain input's AST is prepared when `prepare_plain_ast` is set, and
 /// always for an input a detector refused: a caller that skips plain inputs
 /// may still process a refused bundle as one file.
+///
+/// Also returns the input's facts for linking lazy helpers across inputs
+/// (see [`esbuild::imported_helpers`]), read from the parsed module before
+/// detection; they are empty when detection does not run.
 pub(crate) fn try_prepare_source(
     source: &str,
     filename: &str,
     prepare_plain_ast: bool,
     positions: SourcePositions,
-) -> anyhow::Result<PreparedSource> {
+) -> anyhow::Result<(PreparedSource, LazyHelperLinkFacts)> {
     enum PreparedSourceParts {
         Bundle(Box<DetectedBundle>),
         Plain {
@@ -1292,6 +1300,7 @@ pub(crate) fn try_prepare_source(
 
     let globals = Globals::new();
     let mut split_refusal = None;
+    let mut link_facts = LazyHelperLinkFacts::default();
     let prepared = GLOBALS.set(&globals, || -> anyhow::Result<PreparedSourceParts> {
         let cm: Lrc<SourceMap> = Default::default();
         let (mut module, recoverable_parse_errors) = {
@@ -1301,6 +1310,7 @@ pub(crate) fn try_prepare_source(
         };
 
         if recoverable_parse_errors.is_empty() && !has_strict_mode_syntax_hazard(&module) {
+            link_facts = esbuild::imported_helpers::lazy_helper_link_facts(&module);
             let (detected, refused) = refusal::capture(|| {
                 detect_parsed_source(&mut module, cm, source, false, positions)
             });
@@ -1349,7 +1359,7 @@ pub(crate) fn try_prepare_source(
             refusal: split_refusal,
         },
     };
-    Ok(source)
+    Ok((source, link_facts))
 }
 
 fn detect_parsed_source(

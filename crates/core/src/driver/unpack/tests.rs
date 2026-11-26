@@ -243,6 +243,8 @@ fn prepared_raw_scope_split_keeps_runnable_normalization() {
         plain_prepared: None,
         public_path_candidate: true,
         refusal: None,
+        lazy_helper_exports: Vec::new(),
+        helper_link: None,
     };
 
     let output = unpack_prepared_inputs(vec![input], DecompileOptions::default(), true, false)
@@ -284,6 +286,8 @@ fn unprovable_public_boundary_falls_back_to_one_processed_module() {
         plain_prepared: None,
         public_path_candidate: true,
         refusal: None,
+        lazy_helper_exports: Vec::new(),
+        helper_link: None,
     };
     let sibling = prepare_unpack_input(
         "consumer.js".to_string(),
