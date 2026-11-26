@@ -2,12 +2,13 @@ use crate::collections::{HashMap, HashSet};
 use swc_core::common::Mark;
 
 use swc_core::ecma::ast::{
-    ArrowExpr, Class, DoWhileStmt, Expr, ForInStmt, ForOfStmt, ForStmt, Function, Module, Pat,
-    Stmt, VarDecl, VarDeclKind, WhileStmt,
+    ArrowExpr, BindingIdent, Class, DoWhileStmt, Expr, ForInStmt, ForOfStmt, ForStmt, Function,
+    Module, Pat, Stmt, VarDecl, VarDeclKind, WhileStmt,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use super::binding_facts::collect_binding_facts;
+use crate::analysis::binding_uses::{BindingUseIndex, UseKind};
+
 use super::dead_decls::remove_consumed_uninitialized_decls;
 use super::decl_utils::{binding_id, BindingId};
 use super::expr_utils::is_unresolved_undefined;
@@ -20,6 +21,7 @@ use super::expr_utils::is_unresolved_undefined;
 pub struct UnUndefinedInit {
     unresolved_mark: Mark,
     binding_references: HashMap<BindingId, usize>,
+    uses: BindingUseIndex,
     converted_unused_bindings: HashSet<BindingId>,
     /// The module contains a `with` statement or a direct eval.
     dynamic_scope: bool,
@@ -34,6 +36,7 @@ impl UnUndefinedInit {
         Self {
             unresolved_mark,
             binding_references: HashMap::default(),
+            uses: BindingUseIndex::default(),
             converted_unused_bindings: HashSet::default(),
             dynamic_scope: false,
             undefined_blocked: false,
@@ -45,6 +48,36 @@ impl UnUndefinedInit {
         self.loop_body_depth += 1;
         body.visit_mut_with(self);
         self.loop_body_depth -= 1;
+    }
+
+    /// Whether the `var` binding may hold a value other than `undefined` when
+    /// this declarator runs, so its `= undefined` is a reset. Syntactic only:
+    /// - another declaration of the binding (a redeclaring `var`, a
+    ///   parameter, a hoisted function) may have given it a value;
+    /// - a write earlier in the source can run first, since `var` hoists;
+    /// - a later write inside a hoisted function declaration can run first,
+    ///   because the function may be called before the declaration.
+    ///
+    /// A later write in a function expression, arrow, or class member cannot:
+    /// that function is created after the declaration has run. The remaining
+    /// orders a later write can run first in are a loop, which the loop-body
+    /// check covers, and a `switch` whose `default` precedes a case test that
+    /// writes the binding.
+    fn may_hold_value(&self, binding: &BindingIdent) -> bool {
+        let id = binding_id(&binding.id);
+        let [declaration] = self.uses.declaration_sites(&id) else {
+            return true;
+        };
+        let span = binding.id.span;
+        self.uses.use_sites(&id).iter().any(|site| {
+            matches!(site.kind, UseKind::Write | UseKind::ReadWrite)
+                && (span.is_dummy()
+                    || site.span.lo < span.lo
+                    || (site.function_id != declaration.function_id
+                        && self
+                            .uses
+                            .may_run_before_position(site.function_id, declaration.function_id)))
+        })
     }
 
     fn visit_mut_var_scope<N: VisitMutWith<Self>>(&mut self, node: &mut N) {
@@ -59,11 +92,12 @@ impl VisitMut for UnUndefinedInit {
         self.dynamic_scope = super::eval_utils::has_dynamic_scope_construct(module);
         self.undefined_blocked = self.dynamic_scope
             && super::eval_utils::module_blocks_global_reference(module, "undefined");
-        let facts = collect_binding_facts(module);
-        self.binding_references = facts.references;
+        self.binding_references = BindingUseIndex::collect_legacy_reference_counts(module);
+        self.uses = BindingUseIndex::collect(module);
         self.converted_unused_bindings.clear();
 
         module.visit_mut_children_with(self);
+        self.uses = BindingUseIndex::default();
         remove_consumed_uninitialized_decls(module, &self.converted_unused_bindings);
     }
 
@@ -94,6 +128,7 @@ impl VisitMut for UnUndefinedInit {
             if let Some(init) = &declarator.init {
                 if is_unresolved_undefined(init, self.unresolved_mark)
                     && !(self.undefined_blocked && matches!(**init, Expr::Ident(_)))
+                    && !(decl.kind == VarDeclKind::Var && self.may_hold_value(binding))
                 {
                     let binding = binding_id(&binding.id);
                     declarator.init = None;

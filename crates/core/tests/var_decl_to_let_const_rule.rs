@@ -2456,6 +2456,44 @@ for (let i = 0; i < 2; i++) {
 }
 
 #[test]
+fn assigned_var_with_undefined_init_becomes_bare_let() {
+    // `UnUndefinedInit` keeps `= void 0` on a var a closure writes; a `let`
+    // starts as `undefined` on its own.
+    let input = r#"
+function f(cb) {
+  var x = void 0;
+  cb(() => {
+    x = 1;
+  });
+  return x;
+}
+"#;
+    let expected = r#"
+function f(cb) {
+  let x;
+  cb(() => {
+    x = 1;
+  });
+  return x;
+}
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn unassigned_var_with_undefined_init_becomes_const() {
+    let input = r#"
+var x = void 0;
+use(x);
+"#;
+    let expected = r#"
+const x = void 0;
+use(x);
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
 fn loop_body_var_reset_semantics_survive_pipeline() {
     let input = r#"
 for (var i = 0; i < 2; i++) {

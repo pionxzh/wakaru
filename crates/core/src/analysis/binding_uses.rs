@@ -4,11 +4,11 @@ use swc_core::atoms::Atom;
 use swc_core::common::Span;
 use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, BlockStmt, Callee,
-    CatchClause, ClassDecl, ClassExpr, Constructor, Expr, FnDecl, FnExpr, ForHead, ForInStmt,
-    ForOfStmt, Function, FunctionBody, Ident, ImportDecl, ImportSpecifier, JSXElementName,
-    JSXObject, KeyValuePatProp, MemberExpr, MemberProp, Module, ModuleItem, ObjectPat,
-    ObjectPatProp, Pat, PropName, SimpleAssignTarget, StaticBlock, Stmt, SwitchCase, UnaryExpr,
-    UnaryOp, UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
+    CatchClause, ClassDecl, ClassExpr, Constructor, DefaultDecl, ExportDefaultDecl, Expr, FnDecl,
+    FnExpr, ForHead, ForInStmt, ForOfStmt, Function, FunctionBody, Ident, ImportDecl,
+    ImportSpecifier, JSXElementName, JSXObject, KeyValuePatProp, MemberExpr, MemberProp, Module,
+    ModuleItem, ObjectPat, ObjectPatProp, Pat, PropName, SimpleAssignTarget, StaticBlock, Stmt,
+    SwitchCase, UnaryExpr, UnaryOp, UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -38,9 +38,21 @@ pub(crate) struct UseSite {
     pub(crate) function_id: usize,
 }
 
+/// One declaration of a binding: a declarator, parameter, function or class
+/// name, catch parameter, or import specifier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeclSite {
+    pub(crate) span: Span,
+    /// Id of the innermost function-like construct containing the
+    /// declaration, numbered as [`UseSite::function_id`]. A parameter belongs
+    /// to its own function; a function declaration's name to the enclosing
+    /// one.
+    pub(crate) function_id: usize,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct BindingInfo {
-    pub(crate) declarations: Vec<Span>,
+    pub(crate) declarations: Vec<DeclSite>,
     pub(crate) uses: Vec<UseSite>,
 }
 
@@ -49,6 +61,18 @@ pub(crate) struct BindingUseIndex {
     bindings: HashMap<BindingId, BindingInfo>,
     uninitialized: HashSet<BindingId>,
     uninitialized_decls: HashMap<BindingId, UninitializedDecl>,
+    /// Function-like constructs by id: entry `id - 1` describes function `id`.
+    functions: Vec<FunctionScope>,
+}
+
+/// A function-like construct (function, arrow, constructor, static block).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FunctionScope {
+    /// Id of the enclosing function-like construct; `0` is the module body.
+    parent: usize,
+    /// A function declaration, which hoists: it can be called before the
+    /// statements that precede it in the source have run.
+    hoisted: bool,
 }
 
 /// An uninitialized declarator (`var x;` / `let x;`) with what a temp proof
@@ -88,10 +112,15 @@ impl BindingUseIndex {
             }
         }
 
+        Self::from_collector(collector)
+    }
+
+    fn from_collector(collector: BindingUseCollector) -> Self {
         Self {
             bindings: collector.bindings,
             uninitialized: collector.uninitialized,
             uninitialized_decls: collector.uninitialized_decls,
+            functions: collector.functions,
         }
     }
 
@@ -119,12 +148,27 @@ impl BindingUseIndex {
         let _enter = span.enter();
         let mut collector = BindingUseCollector::default();
         node.visit_with(&mut collector);
+        Self::from_collector(collector)
+    }
 
-        Self {
-            bindings: collector.bindings,
-            uninitialized: collector.uninitialized,
-            uninitialized_decls: collector.uninitialized_decls,
+    /// Whether code in function `function_id` can run before a statement of
+    /// its enclosing function `scope` that precedes it in the source: the
+    /// outermost function between them is a hoisted function declaration.
+    /// A function expression, arrow, or class member is created where it
+    /// stands, so it can only run earlier through a loop. `true` when `scope`
+    /// does not enclose `function_id`.
+    pub(crate) fn may_run_before_position(&self, function_id: usize, scope: usize) -> bool {
+        let mut current = function_id;
+        while current != 0 {
+            let Some(function) = self.functions.get(current - 1) else {
+                return true;
+            };
+            if function.parent == scope {
+                return function.hoisted;
+            }
+            current = function.parent;
         }
+        true
     }
 
     pub(crate) fn uninitialized_bindings(&self) -> HashSet<BindingId> {
@@ -246,6 +290,14 @@ impl BindingUseIndex {
             .is_some_and(|info| !info.declarations.is_empty())
     }
 
+    /// Return the declarations of one resolved binding, in traversal order.
+    pub(crate) fn declaration_sites(&self, binding: &BindingId) -> &[DeclSite] {
+        self.bindings
+            .get(binding)
+            .map(|info| info.declarations.as_slice())
+            .unwrap_or_default()
+    }
+
     /// Return the classified uses of one resolved binding. Consumers that
     /// need a proof over every access (rather than a count) can inspect this
     /// read-only slice without rebuilding a second AST visitor.
@@ -277,7 +329,8 @@ struct BindingUseCollector {
     current_var_kind: Option<VarDeclKind>,
     /// Stack of function-like construct ids; the module body is `0`.
     function_stack: Vec<usize>,
-    next_function_id: usize,
+    /// Every function-like construct entered; function `id` is entry `id - 1`.
+    functions: Vec<FunctionScope>,
     /// Stack of enclosing statement lists: `Some(span)` for a module body,
     /// function body, or block; `None` for a `switch` case consequent.
     statement_lists: Vec<Option<Span>>,
@@ -291,9 +344,12 @@ impl BindingUseCollector {
         self.function_stack.last().copied().unwrap_or(0)
     }
 
-    fn enter_function(&mut self) {
-        self.next_function_id += 1;
-        self.function_stack.push(self.next_function_id);
+    fn enter_function(&mut self, hoisted: bool) {
+        self.functions.push(FunctionScope {
+            parent: self.current_function_id(),
+            hoisted,
+        });
+        self.function_stack.push(self.functions.len());
     }
 
     fn leave_function(&mut self) {
@@ -326,11 +382,15 @@ impl BindingUseCollector {
             return;
         }
         let id = Self::binding_ident_id(binding);
+        let function_id = self.current_function_id();
         self.bindings
             .entry(id)
             .or_default()
             .declarations
-            .push(binding.id.span);
+            .push(DeclSite {
+                span: binding.id.span,
+                function_id,
+            });
     }
 
     fn record_ident_decl(&mut self, ident: &Ident) {
@@ -338,11 +398,15 @@ impl BindingUseCollector {
             return;
         }
         let id = Self::binding_id(ident);
+        let function_id = self.current_function_id();
         self.bindings
             .entry(id)
             .or_default()
             .declarations
-            .push(ident.span);
+            .push(DeclSite {
+                span: ident.span,
+                function_id,
+            });
     }
 
     fn record_use(&mut self, ident: &Ident, kind: UseKind) {
@@ -567,8 +631,8 @@ impl BindingUseCollector {
         }
     }
 
-    fn visit_function_params_and_body(&mut self, function: &Function) {
-        self.enter_function();
+    fn visit_function_params_and_body(&mut self, function: &Function, hoisted: bool) {
+        self.enter_function(hoisted);
         for param in &function.params {
             self.record_pat_decls(&param.pat);
         }
@@ -654,22 +718,35 @@ impl Visit for BindingUseCollector {
 
     fn visit_fn_decl(&mut self, decl: &FnDecl) {
         self.record_ident_decl(&decl.ident);
-        self.visit_function_params_and_body(&decl.function);
+        self.visit_function_params_and_body(&decl.function, true);
+    }
+
+    fn visit_export_default_decl(&mut self, export: &ExportDefaultDecl) {
+        match &export.decl {
+            // `export default function f() {}` is a hoisted declaration.
+            DefaultDecl::Fn(expr) => {
+                if let Some(ident) = &expr.ident {
+                    self.record_ident_decl(ident);
+                }
+                self.visit_function_params_and_body(&expr.function, true);
+            }
+            _ => export.visit_children_with(self),
+        }
     }
 
     fn visit_fn_expr(&mut self, expr: &FnExpr) {
         if let Some(ident) = &expr.ident {
             self.record_ident_decl(ident);
         }
-        self.visit_function_params_and_body(&expr.function);
+        self.visit_function_params_and_body(&expr.function, false);
     }
 
     fn visit_function(&mut self, function: &Function) {
-        self.visit_function_params_and_body(function);
+        self.visit_function_params_and_body(function, false);
     }
 
     fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
-        self.enter_function();
+        self.enter_function(false);
         for param in &arrow.params {
             self.record_pat_decls(param);
         }
@@ -680,13 +757,13 @@ impl Visit for BindingUseCollector {
     }
 
     fn visit_constructor(&mut self, ctor: &Constructor) {
-        self.enter_function();
+        self.enter_function(false);
         ctor.visit_children_with(self);
         self.leave_function();
     }
 
     fn visit_static_block(&mut self, block: &StaticBlock) {
-        self.enter_function();
+        self.enter_function(false);
         block.visit_children_with(self);
         self.leave_function();
     }

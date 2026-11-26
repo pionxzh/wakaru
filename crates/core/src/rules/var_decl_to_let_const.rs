@@ -1616,8 +1616,12 @@ impl VisitMut for VarConverter<'_> {
                 ids.iter().any(|id| self.must_stay_var.contains(id))
             });
             if !any_must_stay {
-                let loop_body_mark = (self.loop_body_depth > 0).then_some(self.unresolved_mark);
-                convert_single_var_decl(var, self.assigned, loop_body_mark);
+                convert_single_var_decl(
+                    var,
+                    self.assigned,
+                    self.unresolved_mark,
+                    self.loop_body_depth > 0,
+                );
             }
         }
         // Don't recurse — VarDecl children are patterns/inits, not nested stmts
@@ -1791,11 +1795,28 @@ fn convert_for_iter_var_decl(var: &mut VarDecl, assigned: &HashSet<BindingId>) {
     };
 }
 
-/// `loop_body_mark` is the unresolved mark when `var` sits in a loop body.
+/// `UnUndefinedInit` keeps `= undefined` on a `var` where it may reset a
+/// value: in a loop body (every iteration), or after a write that can run
+/// first. A `let` declaration initializes the binding to `undefined` on its
+/// own, so the initializer is dropped when the declaration becomes `let`.
+fn drop_undefined_inits(var: &mut VarDecl, unresolved_mark: Mark) {
+    for decl in &mut var.decls {
+        if matches!(decl.name, Pat::Ident(_))
+            && decl
+                .init
+                .as_deref()
+                .is_some_and(|init| is_unresolved_undefined(init, unresolved_mark))
+        {
+            decl.init = None;
+        }
+    }
+}
+
 fn convert_single_var_decl(
     var: &mut VarDecl,
     assigned: &HashSet<BindingId>,
-    loop_body_mark: Option<Mark>,
+    unresolved_mark: Mark,
+    in_loop_body: bool,
 ) {
     if var.kind != VarDeclKind::Var {
         return;
@@ -1803,19 +1824,10 @@ fn convert_single_var_decl(
     if var.decls.iter().any(|d| pat_requires_var_keyword(&d.name)) {
         return;
     }
-    if let Some(unresolved_mark) = loop_body_mark {
-        // `UnUndefinedInit` keeps `= undefined` on a loop-body `var`, where it
-        // resets the binding every iteration. A `let` resets it on its own.
-        for decl in &mut var.decls {
-            if matches!(decl.name, Pat::Ident(_))
-                && decl
-                    .init
-                    .as_deref()
-                    .is_some_and(|init| is_unresolved_undefined(init, unresolved_mark))
-            {
-                decl.init = None;
-            }
-        }
+    if in_loop_body {
+        // Dropped before choosing the kind: a loop-body reset becomes a
+        // bare `let` even when the binding is never assigned.
+        drop_undefined_inits(var, unresolved_mark);
     }
 
     // Check all declarators in this VarDecl
@@ -1824,6 +1836,7 @@ fn convert_single_var_decl(
 
     if !all_have_init {
         var.kind = VarDeclKind::Let;
+        drop_undefined_inits(var, unresolved_mark);
         return;
     }
 
@@ -1836,6 +1849,7 @@ fn convert_single_var_decl(
 
     if any_assigned {
         var.kind = VarDeclKind::Let;
+        drop_undefined_inits(var, unresolved_mark);
     } else {
         var.kind = VarDeclKind::Const;
     }
