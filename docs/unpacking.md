@@ -96,10 +96,15 @@ attempted in order — first match wins:
    err) => () => { if (err) throw err[0]; try { return fn && (res = fn(fn =
    0)), res } catch (e) { throw err = [e], e } }` takes a third parameter
    and is matched by its whole body; its factories become lazy ES module
-   initializers like `__esm`'s. The emitted initializer does not keep a
-   thrown error: where rolldown's helper throws the same error again on every
-   later call, a later call of the emitted one returns without running the
-   factory.
+   initializers like `__esm`'s. Unlike `__esm`, it keeps an error the factory
+   threw and throws it again on every later call, so an initializer kept as
+   a guarded function does too: it checks a kept error before its run-once
+   guard (`if (__wakaru_x_error) throw __wakaru_x_error[0]`) and runs the
+   body in a `try` whose `catch` keeps the error and rethrows it. An
+   initializer that becomes plain module code instead (one reached only
+   through a lowered `import()`, `lazy_import.rs`) needs nothing: an ES
+   module whose evaluation throws keeps that error, and every later
+   `import()` of it rejects with the same error.
    With code splitting, esbuild, Bun, and rolldown declare these helpers in
    one shared chunk, and every other chunk imports them by name (`import { b
    as e } from "./chunk-X.js"; var l = e((f, o) => { … })`). Such a chunk is

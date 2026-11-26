@@ -34,9 +34,9 @@ use emit::{
     redirect_stub_modules,
 };
 use factories::{
-    collect_commonjs_helper_syms, collect_factories, collect_factories_owned,
-    collect_factory_analysis_bindings, collect_factory_body_bindings, collect_helper_syms,
-    filter_helper_factory_declarators, has_factory_detection_evidence,
+    collect_commonjs_helper_syms, collect_error_keeping_helper_syms, collect_factories,
+    collect_factories_owned, collect_factory_analysis_bindings, collect_factory_body_bindings,
+    collect_helper_syms, filter_helper_factory_declarators, has_factory_detection_evidence,
     item_has_helper_factory_declarator, locally_exported_atoms, Factory, FactoryBodyRef,
     PathCommentHints,
 };
@@ -103,6 +103,8 @@ pub(super) fn detect_from_module_with_source(
 
     let mut commonjs_helper_syms = collect_commonjs_helper_syms(module);
     commonjs_helper_syms.extend(imported.commonjs);
+    let mut error_keeping_helper_syms = collect_error_keeping_helper_syms(module);
+    error_keeping_helper_syms.extend(imported.keeps_error);
     let filename_hints = source.map(|source| {
         let source_file = cm.lookup_source_file(module.span.lo);
         PathCommentHints::new(source, source_file.start_pos.0)
@@ -152,6 +154,7 @@ pub(super) fn detect_from_module_with_source(
         module,
         analysis_module,
         commonjs_helper_syms,
+        &error_keeping_helper_syms,
         factories,
         lazy_imports,
         cm,
@@ -170,6 +173,8 @@ pub(super) fn detect_from_owned_factory_module_with_source(
     helper_syms.extend(imported.all);
     let mut commonjs_helper_syms = collect_commonjs_helper_syms(&module);
     commonjs_helper_syms.extend(imported.commonjs);
+    let mut error_keeping_helper_syms = collect_error_keeping_helper_syms(&module);
+    error_keeping_helper_syms.extend(imported.keeps_error);
     // Naming an inlined factory may not lead to a split; the borrowed
     // detector does it on a copy, so the candidate goes back unchanged.
     if has_inlined_factory_calls(&module, &helper_syms) {
@@ -224,6 +229,7 @@ pub(super) fn detect_from_owned_factory_module_with_source(
         &module,
         analysis_module,
         commonjs_helper_syms,
+        &error_keeping_helper_syms,
         factories,
         lazy_imports,
         cm,
@@ -232,10 +238,12 @@ pub(super) fn detect_from_owned_factory_module_with_source(
     .expect("owned factory evidence must produce an esbuild/Bun bundle"))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn detect_from_prepared_factories(
     module: &Module,
     analysis_module: Module,
     commonjs_helper_syms: HashSet<Atom>,
+    error_keeping_helper_syms: &HashSet<Atom>,
     factories: Vec<Factory>,
     lazy_imports: Option<LazyImportPlan>,
     cm: Lrc<SourceMap>,
@@ -402,6 +410,7 @@ fn detect_from_prepared_factories(
             var_name: factory.var_name,
             filename,
             cjs_params: factory.cjs_params,
+            keeps_error: error_keeping_helper_syms.contains(&factory.helper_sym),
             body_stmts: factory.body_stmts,
             referenced_bindings,
             write_bindings,

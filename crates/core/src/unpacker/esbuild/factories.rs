@@ -167,6 +167,27 @@ pub(super) fn collect_commonjs_helper_syms(module: &Module) -> HashSet<Atom> {
     syms
 }
 
+/// Helpers declared like [`collect_helper_syms`] finds them that keep a thrown
+/// error and throw it again on every later call (rolldown's `__esmMin`).
+pub(super) fn collect_error_keeping_helper_syms(module: &Module) -> HashSet<Atom> {
+    let mut syms = HashSet::default();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for decl in &var.decls {
+            let (Some(Expr::Arrow(init)), Pat::Ident(binding)) = (decl.init.as_deref(), &decl.name)
+            else {
+                continue;
+            };
+            if is_rolldown_esm_min_helper(init) {
+                syms.insert(binding.id.sym.clone());
+            }
+        }
+    }
+    syms
+}
+
 /// Returns `true` if `expr` matches the esbuild lazy-helper shape:
 ///   Arrow(≤2 params) → body is Arrow or named Fn expression
 /// or rolldown's `__esmMin` (see [`is_rolldown_esm_min_helper`]).

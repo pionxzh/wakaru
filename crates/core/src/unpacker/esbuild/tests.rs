@@ -601,6 +601,7 @@ fn pending_factory(name: &str, referenced: &[&str], writes: &[&str]) -> PendingF
         var_name: Atom::from(name),
         filename: format!("{name}.js"),
         cjs_params: None,
+        keeps_error: false,
         body_stmts: Vec::new(),
         referenced_bindings: test_bindings(referenced),
         write_bindings: test_bindings(writes),
@@ -746,6 +747,7 @@ fn merged_module_plans_publish_adopted_declarations_to_later_modules() {
     let merged = |name: &str, referenced: &[&str]| MergedFactory {
         var_name: Atom::from(name),
         cjs_params: None,
+        keeps_error: false,
         stmts: Vec::new(),
         referenced_bindings: test_bindings(referenced),
         write_bindings: HashSet::default(),
@@ -932,6 +934,7 @@ fn demotion_cascades_to_dependent_groups_and_refuses_merged_dependents() {
         vec![MergedFactory {
             var_name: Atom::from("init_scope"),
             cjs_params: None,
+            keeps_error: false,
             stmts: Vec::new(),
             referenced_bindings: test_bindings(&["provided"]),
             write_bindings: HashSet::default(),

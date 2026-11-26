@@ -146,6 +146,109 @@ fn rolldown_esm_min_helper_is_a_lazy_helper() {
     }
 }
 
+/// The emitted initializer of an `__esmMin` factory keeps a thrown error and
+/// throws it again on later calls: `if (error) throw error[0]` before the
+/// run-once guard, and a `try` whose `catch` stores the error and rethrows
+/// it. One of esbuild's `__esm` keeps its plain guard.
+fn assert_keeps_thrown_error(code: &str, name: &str, keeps: bool) {
+    let error = format!("__wakaru_{name}_error");
+    let shape = [
+        format!("throw {error}[0]"),
+        format!("{error} = ["),
+        format!("catch (__wakaru_{name}_thrown)"),
+        format!("throw __wakaru_{name}_thrown"),
+    ];
+    for part in &shape {
+        assert_eq!(code.contains(part.as_str()), keeps, "{part:?} in:\n{code}");
+    }
+    if keeps {
+        let rethrow = code.find(&format!("throw {error}[0]")).unwrap();
+        let guard = code
+            .find(&format!("if (__wakaru_{name}_initialized)"))
+            .unwrap();
+        assert!(rethrow < guard, "the kept error is checked first:\n{code}");
+    }
+}
+
+#[test]
+fn esm_min_initializer_keeps_a_thrown_error_and_esm_does_not() {
+    for (helper, keeps) in [
+        (ESM_MIN_HELPER, true),
+        (ESM_MIN_HELPER_MINIFIED, true),
+        (
+            "(fn, value) => () => (fn && (value = fn(fn = 0)), value)",
+            false,
+        ),
+    ] {
+        let bundle = format!(
+            r#"
+var lazy = {helper};
+var __commonJS = (cb, mod) => () => (mod || cb((mod = {{ exports: {{}} }}).exports, mod), mod.exports);
+var calls = 0;
+var init_failing = lazy(() => {{ calls++; throw new Error("init-failed"); }});
+var require_reader = __commonJS((exports, module) => {{
+  var first, second;
+  try {{ init_failing(); }} catch (e) {{ first = e; }}
+  try {{ init_failing(); }} catch (e) {{ second = e; }}
+  module.exports = {{ same: first === second, calls }};
+}});
+console.log(require_reader());
+"#
+        );
+        for pairs in [
+            expect_unpack_raw(&bundle),
+            expect_unpack(&bundle, "bundle.js"),
+        ] {
+            let init = &pairs
+                .iter()
+                .find(|(name, _)| name == "init_failing.js")
+                .unwrap_or_else(|| panic!("initializer not split: {pairs:#?}"))
+                .1;
+            assert_keeps_thrown_error(init, "init_failing", keeps);
+            assert!(init.contains("init-failed"), "{init}");
+            assert_eq!(validate_output_modules(&pairs), vec![]);
+        }
+    }
+}
+
+#[test]
+fn demoted_esm_min_initializer_keeps_a_thrown_error() {
+    // An entry writer that cannot move cancels the split; the initializer
+    // returns to the entry as a guarded function.
+    for (helper, keeps) in [
+        (ESM_MIN_HELPER, true),
+        (
+            "(fn, value) => () => (fn && (value = fn(fn = 0)), value)",
+            false,
+        ),
+    ] {
+        let bundle = format!(
+            r#"
+var lazy = {helper};
+var __commonJS = (cb, mod) => () => (mod || cb((mod = {{ exports: {{}} }}).exports, mod), mod.exports);
+var ready = 0;
+var load = lazy(() => {{ ready = 1; throw new Error("load-failed"); }});
+var reader = __commonJS((exports, module) => {{ module.exports = 1; }});
+var reset = () => {{ ready = 2; }};
+try {{ load(); }} catch (e) {{ record(e); }} reset(); record(ready, reader());
+"#
+        );
+        for pairs in [
+            expect_unpack_raw(&bundle),
+            expect_unpack(&bundle, "bundle.js"),
+        ] {
+            assert!(
+                pairs.iter().all(|(name, _)| name != "load.js"),
+                "the initializer must demote into entry: {pairs:#?}"
+            );
+            let entry = &pairs.iter().find(|(name, _)| name == "entry.js").unwrap().1;
+            assert!(entry.contains("function load()"), "{entry}");
+            assert_keeps_thrown_error(entry, "load", keeps);
+            assert_eq!(validate_output_modules(&pairs), vec![]);
+        }
+    }
+}
+
 #[test]
 fn three_parameter_helper_with_another_body_is_not_a_lazy_helper() {
     // Each differs from `__esmMin` in one place.

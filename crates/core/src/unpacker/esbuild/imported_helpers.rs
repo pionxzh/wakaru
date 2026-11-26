@@ -40,8 +40,8 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 use crate::collections::{HashMap, HashSet};
 
 use super::factories::{
-    collect_commonjs_helper_syms, collect_helper_syms, factory_shape_helper_sym,
-    locally_exported_atoms,
+    collect_commonjs_helper_syms, collect_error_keeping_helper_syms, collect_helper_syms,
+    factory_shape_helper_sym, locally_exported_atoms,
 };
 use super::inline_factories::{inlined_factory_helpers, unwritten_helper_positions};
 use crate::utils::paren::strip_parens;
@@ -51,8 +51,11 @@ use crate::utils::paren::strip_parens;
 pub enum LazyHelperKind {
     /// A CommonJS module wrapper (`__commonJS`, `__commonJSMin`).
     CommonJs,
-    /// A lazy ES module initializer (`__esm`, `__esmMin`).
+    /// A lazy ES module initializer (`__esm`).
     EsmInit,
+    /// A lazy ES module initializer that keeps an error the factory threw and
+    /// throws it again on every later call (rolldown's `__esmMin`).
+    EsmInitKeepingError,
 }
 
 /// One name a module imports from a relative specifier and calls in factory
@@ -99,6 +102,7 @@ pub(crate) fn with_imported_helpers<R>(
 pub(super) struct ImportedHelperSyms {
     pub(super) all: HashSet<Atom>,
     pub(super) commonjs: HashSet<Atom>,
+    pub(super) keeps_error: HashSet<Atom>,
 }
 
 pub(super) fn imported_helper_syms(module: &Module) -> ImportedHelperSyms {
@@ -115,8 +119,14 @@ pub(super) fn imported_helper_syms(module: &Module) -> ImportedHelperSyms {
             else {
                 continue;
             };
-            if *kind == LazyHelperKind::CommonJs {
-                syms.commonjs.insert(local.clone());
+            match kind {
+                LazyHelperKind::CommonJs => {
+                    syms.commonjs.insert(local.clone());
+                }
+                LazyHelperKind::EsmInitKeepingError => {
+                    syms.keeps_error.insert(local.clone());
+                }
+                LazyHelperKind::EsmInit => {}
             }
             syms.all.insert(local);
         }
@@ -182,12 +192,15 @@ pub(crate) fn exported_lazy_helpers(module: &Module) -> Vec<(String, LazyHelperK
     let candidates: HashSet<Atom> = exported.iter().map(|(local, _)| local.clone()).collect();
     let unwritten = unwritten_helper_positions(module, &candidates);
     let commonjs = collect_commonjs_helper_syms(module);
+    let keeps_error = collect_error_keeping_helper_syms(module);
     exported
         .into_iter()
         .filter(|(local, _)| unwritten.contains_key(local))
         .map(|(local, name)| {
             let kind = if commonjs.contains(&local) {
                 LazyHelperKind::CommonJs
+            } else if keeps_error.contains(&local) {
+                LazyHelperKind::EsmInitKeepingError
             } else {
                 LazyHelperKind::EsmInit
             };

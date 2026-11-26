@@ -21,6 +21,9 @@ pub(super) struct PendingFactory {
     pub(super) var_name: Atom,
     pub(super) filename: String,
     pub(super) cjs_params: Option<CjsFactoryParams>,
+    /// The helper keeps an error the factory threw and throws it again on
+    /// every later call (rolldown's `__esmMin`).
+    pub(super) keeps_error: bool,
     pub(super) body_stmts: Vec<Stmt>,
     pub(super) referenced_bindings: HashSet<BindingId>,
     pub(super) write_bindings: HashSet<BindingId>,
@@ -448,6 +451,7 @@ pub(super) fn partition_merged_factories(
                 MergedFactory {
                     var_name: factory.var_name,
                     cjs_params: factory.cjs_params,
+                    keeps_error: factory.keeps_error,
                     stmts: factory.body_stmts,
                     referenced_bindings: factory.referenced_bindings,
                     write_bindings: factory.write_bindings,
@@ -970,9 +974,18 @@ pub(super) fn relocated_entry_bindings(
 
 /// A lazy init factory whose writes all belong to one scope module; its body
 /// is appended to that module instead of becoming a file of its own.
+/// A factory a merged module emits as a callable.
+pub(super) struct InitBody {
+    pub(super) name: Atom,
+    pub(super) cjs_params: Option<CjsFactoryParams>,
+    pub(super) keeps_error: bool,
+    pub(super) stmts: Vec<Stmt>,
+}
+
 pub(super) struct MergedFactory {
     pub(super) var_name: Atom,
     pub(super) cjs_params: Option<CjsFactoryParams>,
+    pub(super) keeps_error: bool,
     pub(super) stmts: Vec<Stmt>,
     pub(super) referenced_bindings: HashSet<BindingId>,
     pub(super) write_bindings: HashSet<BindingId>,
@@ -1004,7 +1017,7 @@ pub(super) struct MergedModulePlan {
     /// Sorted names the module exports for the declarations it owns. Later
     /// modules only add to their own owned sets, so this stays final.
     pub(super) export_names: Vec<Atom>,
-    pub(super) init_bodies: Vec<(Atom, Option<CjsFactoryParams>, Vec<Stmt>)>,
+    pub(super) init_bodies: Vec<InitBody>,
     /// Names the synthesized init helpers must not shadow.
     pub(super) helper_reserved_atoms: HashSet<Atom>,
 }
@@ -1038,7 +1051,7 @@ pub(super) fn plan_merged_module(
             .get(filename)
             .cloned()
             .unwrap_or_default();
-        let mut init_bodies: Vec<(Atom, Option<CjsFactoryParams>, Vec<Stmt>)> = Vec::new();
+        let mut init_bodies: Vec<InitBody> = Vec::new();
 
         let already_imported = context
             .module_already_imports
@@ -1081,7 +1094,12 @@ pub(super) fn plan_merged_module(
                     MergedRefTarget::SameModule | MergedRefTarget::Unresolved => {}
                 }
             }
-            init_bodies.push((mf.var_name, mf.cjs_params, mf.stmts));
+            init_bodies.push(InitBody {
+                name: mf.var_name,
+                cjs_params: mf.cjs_params,
+                keeps_error: mf.keeps_error,
+                stmts: mf.stmts,
+            });
         }
 
         let mut changed = true;
@@ -1209,7 +1227,7 @@ pub(super) fn plan_merged_module(
     owned_items.sort_by_key(|(index, _)| *index);
 
     let mut helper_reserved_atoms = local_atoms;
-    helper_reserved_atoms.extend(init_bodies.iter().map(|(name, _, _)| name.clone()));
+    helper_reserved_atoms.extend(init_bodies.iter().map(|body| body.name.clone()));
 
     MergedModulePlan {
         module_index,

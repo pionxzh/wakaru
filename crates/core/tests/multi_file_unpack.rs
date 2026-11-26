@@ -5973,6 +5973,12 @@ fn imported_esm_initializers_split_beside_commonjs_factories() {
             init != "entry.js",
             "the initializer stays in the entry: {code}"
         );
+        // `c`, rolldown's `__esmMin`, keeps a thrown error; esbuild's `__esm` does not.
+        assert_eq!(
+            code.contains("throw __wakaru_i_error[0]"),
+            helper == "c",
+            "{helper}: {code}"
+        );
         assert_valid_module_graph(&output.modules);
     }
 }

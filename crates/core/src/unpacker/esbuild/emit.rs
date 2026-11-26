@@ -5,10 +5,11 @@ use swc_core::atoms::Atom;
 use swc_core::common::sync::Lrc;
 use swc_core::common::{SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, BindingIdent, Bool, Decl, Expr, ExprStmt, FnDecl, Function,
-    FunctionBody, Ident, IdentName, IfStmt, KeyValueProp, Lit, MemberExpr, MemberProp, Module,
-    ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
-    SimpleAssignTarget, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    ArrayLit, AssignExpr, AssignOp, AssignTarget, BindingIdent, BlockStmt, Bool, CatchClause,
+    ComputedPropName, Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, Function, FunctionBody, Ident,
+    IdentName, IfStmt, KeyValueProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
+    Number, ObjectLit, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt,
+    ThrowStmt, TryStmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -84,9 +85,16 @@ pub(super) fn restore_demoted_factories(
                     &format!("__wakaru_{}_initialized", factory.var_name).into(),
                     &mut reserved_entry_atoms,
                 );
+                let kept_error = factory.keeps_error.then(|| {
+                    reserve_import_atom(
+                        &format!("__wakaru_{}_error", factory.var_name).into(),
+                        &mut reserved_entry_atoms,
+                    )
+                });
                 synthesize_entry_init_items(
                     &factory.var_name,
                     &guard,
+                    kept_error.as_ref(),
                     factory.body_stmts,
                     factory.span,
                 )
@@ -334,6 +342,7 @@ pub(super) fn emit_standalone_group(
         code.push_mapped(emit_factory_function_code(
             &factory.var_name,
             factory.cjs_params.as_ref(),
+            factory.keeps_error,
             factory_body_stmts,
             &mut reserved_helper_atoms,
             group_filename.clone(),
@@ -497,11 +506,12 @@ pub(super) fn emit_merged_module_plan(
     let extra_code = emit_items(body_items, module.filename.clone(), cm.clone(), positions);
     module.code.push('\n');
     module.append_mapped(extra_code);
-    for (name, cjs_params, stmts) in init_bodies {
+    for body in init_bodies {
         module.append_mapped(emit_factory_function_code(
-            &name,
-            cjs_params.as_ref(),
-            stmts,
+            &body.name,
+            body.cjs_params.as_ref(),
+            body.keeps_error,
+            body.stmts,
             &mut helper_reserved_atoms,
             module.filename.clone(),
             cm.clone(),
@@ -519,6 +529,7 @@ pub(super) fn emit_merged_module_plan(
 fn synthesize_entry_init_items(
     var_name: &Atom,
     guard_name: &Atom,
+    kept_error: Option<&Atom>,
     body_stmts: Vec<Stmt>,
     span: Span,
 ) -> Vec<(u32, ModuleItem)> {
@@ -567,7 +578,18 @@ fn synthesize_entry_init_items(
             }))),
         })),
     }));
-    stmts.extend(body_stmts);
+    let error_decl = match kept_error {
+        Some(error) => {
+            let (check, guarded) = keep_thrown_error(error, var_name, body_stmts);
+            stmts.insert(0, check);
+            stmts.push(guarded);
+            Some(error_var_decl(error))
+        }
+        None => {
+            stmts.extend(body_stmts);
+            None
+        }
+    };
 
     let init_fn = ModuleItem::Stmt(Stmt::Decl(Decl::Fn(FnDecl {
         ident: Ident::new(var_name.clone(), DUMMY_SP, SyntaxContext::empty()),
@@ -589,7 +611,110 @@ fn synthesize_entry_init_items(
         }),
     })));
 
-    vec![(span.lo.0, guard_decl), (span.lo.0, init_fn)]
+    let mut items = vec![(span.lo.0, guard_decl)];
+    items.extend(error_decl.map(|decl| (span.lo.0, decl)));
+    items.push((span.lo.0, init_fn));
+    items
+}
+
+/// `var error;`, the slot a rolldown `__esmMin` initializer keeps its
+/// thrown error in.
+fn error_var_decl(error: &Atom) -> ModuleItem {
+    ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+        span: DUMMY_SP,
+        ctxt: SyntaxContext::empty(),
+        kind: VarDeclKind::Var,
+        declare: false,
+        decls: vec![VarDeclarator {
+            span: DUMMY_SP,
+            name: Pat::Ident(BindingIdent {
+                id: Ident::new(error.clone(), DUMMY_SP, SyntaxContext::empty()),
+                type_ann: None,
+            }),
+            init: None,
+            definite: false,
+        }],
+    }))))
+}
+
+/// `if (error) throw error[0];` and `try { body } catch (thrown) { error =
+/// [thrown]; throw thrown; }`: rolldown's `__esmMin` throws an error the
+/// factory threw again on every later call. The catch parameter takes a name
+/// the body does not mention (see [`ident_atoms_in_stmts`]).
+fn keep_thrown_error(error: &Atom, var_name: &Atom, body_stmts: Vec<Stmt>) -> (Stmt, Stmt) {
+    let ident = |sym: &Atom| Ident::new(sym.clone(), DUMMY_SP, SyntaxContext::empty());
+    let mut mentioned = ident_atoms_in_stmts(&body_stmts);
+    mentioned.insert(error.clone());
+    let thrown = reserve_import_atom(
+        &format!("__wakaru_{var_name}_thrown").into(),
+        &mut mentioned,
+    );
+    let check = Stmt::If(IfStmt {
+        span: DUMMY_SP,
+        test: Box::new(Expr::Ident(ident(error))),
+        cons: Box::new(Stmt::Throw(ThrowStmt {
+            span: DUMMY_SP,
+            arg: Box::new(Expr::Member(MemberExpr {
+                span: DUMMY_SP,
+                obj: Box::new(Expr::Ident(ident(error))),
+                prop: MemberProp::Computed(ComputedPropName {
+                    span: DUMMY_SP,
+                    expr: Box::new(Expr::Lit(Lit::Num(Number {
+                        span: DUMMY_SP,
+                        value: 0.0,
+                        raw: None,
+                    }))),
+                }),
+            })),
+        })),
+        alt: None,
+    });
+    let remember = Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr: Box::new(Expr::Assign(AssignExpr {
+            span: DUMMY_SP,
+            op: AssignOp::Assign,
+            left: AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent {
+                id: ident(error),
+                type_ann: None,
+            })),
+            right: Box::new(Expr::Array(ArrayLit {
+                span: DUMMY_SP,
+                elems: vec![Some(ExprOrSpread {
+                    spread: None,
+                    expr: Box::new(Expr::Ident(ident(&thrown))),
+                })],
+            })),
+        })),
+    });
+    let guarded = Stmt::Try(Box::new(TryStmt {
+        span: DUMMY_SP,
+        block: BlockStmt {
+            span: DUMMY_SP,
+            ctxt: SyntaxContext::empty(),
+            stmts: body_stmts,
+        },
+        handler: Some(CatchClause {
+            span: DUMMY_SP,
+            param: Some(Pat::Ident(BindingIdent {
+                id: ident(&thrown),
+                type_ann: None,
+            })),
+            body: BlockStmt {
+                span: DUMMY_SP,
+                ctxt: SyntaxContext::empty(),
+                stmts: vec![
+                    remember,
+                    Stmt::Throw(ThrowStmt {
+                        span: DUMMY_SP,
+                        arg: Box::new(Expr::Ident(ident(&thrown))),
+                    }),
+                ],
+            },
+        }),
+        finalizer: None,
+    }));
+    (check, guarded)
 }
 
 /// Re-synthesize a demoted CommonJS factory into the entry as a cached
@@ -740,9 +865,11 @@ fn ident_atoms_in_stmts(stmts: &[Stmt]) -> HashSet<Atom> {
 /// cached `require`-style function, a lazy ESM initializer a guarded init
 /// function. The cache or guard takes a name not already reserved in the
 /// target module and adds it to `reserved`.
+#[allow(clippy::too_many_arguments)]
 fn emit_factory_function_code(
     name: &Atom,
     cjs_params: Option<&CjsFactoryParams>,
+    keeps_error: bool,
     stmts: Vec<Stmt>,
     reserved: &mut HashSet<Atom>,
     filename: String,
@@ -762,11 +889,25 @@ fn emit_factory_function_code(
     let mut code = MappedCode::default();
     let Some(cjs_params) = cjs_params else {
         let guard = reserve_import_atom(&format!("__wakaru_{name}_initialized").into(), reserved);
+        if !keeps_error {
+            code.push_str(&format!(
+                "var {guard} = false;\nexport function {name}() {{\nif ({guard}) return;\n{guard} = true;\n"
+            ));
+            code.push_mapped(body);
+            code.push_str("\n}\n");
+            return code;
+        }
+        // rolldown's `__esmMin` keeps a thrown error and throws it again on
+        // every later call.
+        let error = reserve_import_atom(&format!("__wakaru_{name}_error").into(), reserved);
+        let thrown = reserve_import_atom(&format!("__wakaru_{name}_thrown").into(), reserved);
         code.push_str(&format!(
-            "var {guard} = false;\nexport function {name}() {{\nif ({guard}) return;\n{guard} = true;\n"
+            "var {guard} = false;\nvar {error};\nexport function {name}() {{\nif ({error}) throw {error}[0];\nif ({guard}) return;\n{guard} = true;\ntry {{\n"
         ));
         code.push_mapped(body);
-        code.push_str("\n}\n");
+        code.push_str(&format!(
+            "\n}} catch ({thrown}) {{\n{error} = [{thrown}];\nthrow {thrown};\n}}\n}}\n"
+        ));
         return code;
     };
     let cache = reserve_import_atom(&format!("__wakaru_{name}_cache").into(), reserved);
