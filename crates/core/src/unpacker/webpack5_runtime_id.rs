@@ -22,12 +22,13 @@
 //! No rule in the pipeline removes a constant `if (true)`, so the fold drops
 //! the branch itself and the module's requires can become ESM imports.
 
+use swc_core::atoms::Atom as SwcAtom;
 use swc_core::common::util::take::Take;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, BinExpr, BinaryOp, BindingIdent, Bool, CallExpr, Callee, Class, Decl, Expr,
-    ExprStmt, FnDecl, Function, Ident, Lit, MemberExpr, MemberProp, Module, ModuleItem, Pat, Stmt,
-    UnaryExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignOp, BinExpr, BinaryOp, BindingIdent, Bool, CallExpr, Callee,
+    Class, Decl, Expr, ExprStmt, FnDecl, Function, Ident, Lit, MemberExpr, MemberProp, Module,
+    ModuleItem, Pat, Stmt, UnaryExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -75,8 +76,13 @@ impl std::fmt::Display for WebpackRuntimeId {
 /// A bootstrap is the input's top level or the body of a top-level IIFE. Its
 /// `__webpack_require__` is a function declared directly in that body that
 /// also gets the module table assigned (`R.m = modules`, which webpack emits
-/// whenever the runtime loads chunks, the only case with a `.j`). Only
-/// statement-level assignments `R.j = <value>` in that same body count.
+/// whenever the runtime loads chunks, the only case with a `.j`). Assignments
+/// `R.j = <value>` and `R.m = …` count in any expression position of that
+/// body's statements, since a minifier merges the bootstrap's statements into
+/// an `if` test, a `return` argument, a declarator, or a `for` header
+/// (`if (u.m = o, u.n = …, …) {…}`). They do not count inside a nested
+/// function, arrow, or class: a `.j` set in a callback is not the runtime's
+/// id. Two different ids in one bootstrap are both recorded.
 pub(crate) fn webpack_runtime_ids(module: &Module) -> Vec<WebpackRuntimeId> {
     let mut ids = Vec::new();
     let top_level = module
@@ -99,6 +105,31 @@ pub(crate) fn webpack_runtime_ids(module: &Module) -> Vec<WebpackRuntimeId> {
     ids
 }
 
+/// The runtime of an input that no detector splits: a webpack 5 runtime-only
+/// file (`optimization.runtimeChunk`), whose own module table is empty, so
+/// no chunk detection matches it. Its ids still decide the conditions of the
+/// modules its build's chunks hold.
+#[derive(Debug, Clone)]
+pub(crate) struct UndetectedWebpackRuntime {
+    /// The chunk-loading globals the runtime binds (its build identity, as
+    /// [`super::DetectedBundle::chunk_loading_globals`] reads it).
+    pub(crate) chunk_loading_globals: Vec<String>,
+    pub(crate) runtime_ids: Vec<WebpackRuntimeId>,
+}
+
+/// [`UndetectedWebpackRuntime`] for an input no detector split, when its
+/// bootstraps assign a runtime id.
+pub(crate) fn undetected_webpack_runtime(module: &Module) -> Option<UndetectedWebpackRuntime> {
+    let runtime_ids = webpack_runtime_ids(module);
+    if runtime_ids.is_empty() {
+        return None;
+    }
+    Some(UndetectedWebpackRuntime {
+        chunk_loading_globals: super::chunk_loading_global::chunk_loading_globals(module),
+        runtime_ids,
+    })
+}
+
 fn collect_bootstrap_runtime_ids(stmts: &[&Stmt], ids: &mut Vec<WebpackRuntimeId>) {
     let declared_functions = stmts
         .iter()
@@ -110,57 +141,70 @@ fn collect_bootstrap_runtime_ids(stmts: &[&Stmt], ids: &mut Vec<WebpackRuntimeId
     if declared_functions.is_empty() {
         return;
     }
-    let mut table_owners = HashSet::default();
-    let mut assigned = Vec::new();
+    let mut collector = BootstrapAssignments {
+        declared_functions: &declared_functions,
+        table_owners: HashSet::default(),
+        assigned: Vec::new(),
+    };
     for stmt in stmts {
-        let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
-            continue;
-        };
-        let exprs: Vec<&Expr> = match strip_parens(expr) {
-            Expr::Seq(seq) => seq.exprs.iter().map(|expr| strip_parens(expr)).collect(),
-            expr => vec![expr],
-        };
-        for expr in exprs {
-            let Expr::Assign(assign) = expr else {
-                continue;
-            };
-            if assign.op != swc_core::ecma::ast::AssignOp::Assign {
-                continue;
-            }
-            let Some(member) = assign.left.as_simple().and_then(|left| left.as_member()) else {
-                continue;
-            };
-            let Expr::Ident(object) = &*member.obj else {
-                continue;
-            };
-            if !declared_functions.contains(&object.sym) {
-                continue;
-            }
-            let MemberProp::Ident(prop) = &member.prop else {
-                continue;
-            };
-            match prop.sym.as_ref() {
-                "m" => {
-                    table_owners.insert(object.sym.clone());
-                }
-                "j" => {
-                    let id = match strip_parens(&assign.right) {
-                        Expr::Lit(Lit::Num(number)) => WebpackRuntimeId::Number(number.value),
-                        Expr::Lit(Lit::Str(string)) => match string.value.as_str() {
-                            Some(value) => WebpackRuntimeId::String(value.to_string()),
-                            None => WebpackRuntimeId::NonLiteral,
-                        },
-                        _ => WebpackRuntimeId::NonLiteral,
-                    };
-                    assigned.push((object.sym.clone(), id));
-                }
-                _ => {}
-            }
+        stmt.visit_with(&mut collector);
+    }
+    for (owner, id) in collector.assigned {
+        if collector.table_owners.contains(&owner) && !ids.contains(&id) {
+            ids.push(id);
         }
     }
-    for (owner, id) in assigned {
-        if table_owners.contains(&owner) && !ids.contains(&id) {
-            ids.push(id);
+}
+
+/// `R.m = …` and `R.j = …` on a declared function `R` in the bootstrap's own
+/// code: not inside a nested function (a declared function's body included),
+/// arrow, or class.
+struct BootstrapAssignments<'a> {
+    declared_functions: &'a HashSet<SwcAtom>,
+    table_owners: HashSet<SwcAtom>,
+    assigned: Vec<(SwcAtom, WebpackRuntimeId)>,
+}
+
+impl Visit for BootstrapAssignments<'_> {
+    fn visit_function(&mut self, _: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+    fn visit_class(&mut self, _: &Class) {}
+
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        assign.visit_children_with(self);
+        if assign.op != AssignOp::Assign {
+            return;
+        }
+        let Some(member) = assign.left.as_simple().and_then(|left| left.as_member()) else {
+            return;
+        };
+        let Expr::Ident(object) = &*member.obj else {
+            return;
+        };
+        if !self.declared_functions.contains(&object.sym) {
+            return;
+        }
+        let MemberProp::Ident(prop) = &member.prop else {
+            return;
+        };
+        match prop.sym.as_ref() {
+            "m" => {
+                self.table_owners.insert(object.sym.clone());
+            }
+            "j" => {
+                let id = match strip_parens(&assign.right) {
+                    Expr::Lit(Lit::Num(number)) => WebpackRuntimeId::Number(number.value),
+                    Expr::Lit(Lit::Str(string)) => match string.value.as_str() {
+                        Some(value) => WebpackRuntimeId::String(value.to_string()),
+                        None => WebpackRuntimeId::NonLiteral,
+                    },
+                    _ => WebpackRuntimeId::NonLiteral,
+                };
+                self.assigned.push((object.sym.clone(), id));
+            }
+            _ => {}
         }
     }
 }
@@ -763,6 +807,54 @@ mod tests {
 
     fn matches(pattern: &str, text: &str) -> Option<bool> {
         Pattern::parse(pattern).map(|pattern| pattern.full_match(text))
+    }
+
+    fn ids(source: &str) -> Vec<WebpackRuntimeId> {
+        swc_core::common::GLOBALS.set(&Default::default(), || {
+            let cm: swc_core::common::sync::Lrc<swc_core::common::SourceMap> = Default::default();
+            let module = super::super::parse_es_module(source, "input.js", cm)
+                .expect("fixture should parse");
+            webpack_runtime_ids(&module)
+        })
+    }
+
+    #[test]
+    fn runtime_ids_are_read_in_any_bootstrap_expression_position() {
+        let number = |value| vec![WebpackRuntimeId::Number(value)];
+        // Merged into an `if` test, a `return` argument, a declarator, and a
+        // `for` header.
+        assert_eq!(
+            ids("(()=>{var o={};function u(e){}if(u.m=o,u.n=1,u.j=7){}})()"),
+            number(7.0)
+        );
+        assert_eq!(
+            ids("(function(){var o={};function u(e){}return u.m=o,u.j=7,u(1)})()"),
+            number(7.0)
+        );
+        assert_eq!(
+            ids("(()=>{var o={};function u(e){}var a=(u.m=o,u.j=7);})()"),
+            number(7.0)
+        );
+        assert_eq!(
+            ids("(()=>{var o={};function u(e){}for(u.m=o,u.j=\"main\";;)break})()"),
+            vec![WebpackRuntimeId::String("main".into())]
+        );
+        // Two ids in one bootstrap are both kept.
+        assert_eq!(
+            ids("(()=>{var o={};function u(e){}u.m=o;if(u.j=7){}u.j=8})()"),
+            vec![WebpackRuntimeId::Number(7.0), WebpackRuntimeId::Number(8.0)]
+        );
+    }
+
+    #[test]
+    fn runtime_ids_in_nested_functions_do_not_count() {
+        // Not the runtime's own `.j`: a callback, a function body, a class.
+        assert_eq!(
+            ids("(()=>{var o={};function u(e){u.j=9}u.m=o,u.j=7,(()=>{u.j=8})(),setTimeout(function(){u.j=6}),class{x(){u.j=5}}})()"),
+            vec![WebpackRuntimeId::Number(7.0)]
+        );
+        // `u.m` set only in a callback does not make `u` the runtime.
+        assert!(ids("(()=>{var o={};function u(e){}(()=>{u.m=o})(),u.j=7})()").is_empty());
     }
 
     #[test]

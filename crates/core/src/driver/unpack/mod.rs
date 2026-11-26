@@ -20,6 +20,7 @@ use crate::rules::{
     SmartRename, UnEsm, UnExportRename, UnIife,
 };
 pub use crate::unpacker::refusal::{SplitRefusal, SplitRefusalReason};
+use crate::unpacker::webpack5_runtime_id::UndetectedWebpackRuntime;
 use crate::unpacker::{
     scope_hoist, try_prepare_bundle, try_prepare_source, BundleFormat, DetectedBundle,
     LazyHelperKind, LazyHelperLinkFacts, PreparedModuleAst, PreparedSource, SourcePositions,
@@ -114,6 +115,10 @@ pub struct PreparedUnpackInput {
     /// Set while this input calls a name imported from a relative path in
     /// factory position and waits for [`link_imported_lazy_helpers`].
     helper_link: Option<Box<helper_link::PendingHelperLink>>,
+    /// The webpack 5 runtime an input no detector split holds (a runtime-only
+    /// chunk): its ids decide the runtime-id conditions of its build's
+    /// modules in the other inputs.
+    webpack_runtime: Option<Box<UndetectedWebpackRuntime>>,
 }
 
 impl PreparedUnpackInput {
@@ -250,6 +255,7 @@ fn prepare_detected_input(
                         refusal: None,
                         lazy_helper_exports: Vec::new(),
                         helper_link: None,
+                        webpack_runtime: None,
                     });
                 }
                 Err(input_parse_error) => {
@@ -264,7 +270,7 @@ fn prepare_detected_input(
         }
     };
 
-    let (mut plain_prepared, refusal) = match prepared {
+    let (mut plain_prepared, refusal, webpack_runtime) = match prepared {
         PreparedSource::Bundle(detected) => {
             let format = detected.result.format;
             let public_path_candidate =
@@ -293,9 +299,14 @@ fn prepare_detected_input(
                 refusal: None,
                 lazy_helper_exports: Vec::new(),
                 helper_link: None,
+                webpack_runtime: None,
             });
         }
-        PreparedSource::Plain { prepared, refusal } => (prepared, refusal),
+        PreparedSource::Plain {
+            prepared,
+            refusal,
+            webpack_runtime,
+        } => (prepared, refusal, webpack_runtime),
     };
 
     // Detection always starts with the ES/JSX grammar. If that parser only
@@ -346,6 +357,7 @@ fn prepare_detected_input(
                 refusal: None,
                 lazy_helper_exports: Vec::new(),
                 helper_link: None,
+                webpack_runtime,
             });
         }
     }
@@ -362,6 +374,7 @@ fn prepare_detected_input(
         refusal,
         lazy_helper_exports: Vec::new(),
         helper_link: None,
+        webpack_runtime,
     })
 }
 
@@ -556,6 +569,8 @@ fn unpack_prepared_inputs_impl(
     let mut detected_formats = Vec::new();
     let mut preparation_warnings = Vec::new();
     let mut origins = Vec::with_capacity(inputs.len());
+    let mut undetected_runtimes = Vec::new();
+    let mut detected_build_has_global = false;
     for (input_index, input) in inputs.into_iter().enumerate() {
         let input_id = PreparedInputId::from_index(input_index);
         let PreparedUnpackInput {
@@ -570,8 +585,15 @@ fn unpack_prepared_inputs_impl(
             refusal: _,
             lazy_helper_exports: _,
             helper_link: _,
+            webpack_runtime,
         } = input;
         origins.push(origin);
+        if let Some(runtime) = webpack_runtime {
+            undetected_runtimes.push(*runtime);
+        }
+        if let Some(detected) = &detected {
+            detected_build_has_global |= !detected.chunk_loading_globals.is_empty();
+        }
         match detection {
             PreparedInputDetection::Bundle(format) => {
                 if !detected_formats.contains(&format) {
@@ -816,7 +838,14 @@ fn unpack_prepared_inputs_impl(
     if !raw && detected_formats == [BundleFormat::ScopeHoisted] && modules.len() > 1 {
         options.dce_mode = super::types::DceMode::Off;
     }
-    let (modules, numeric_rewrite_plan) = prepare_multi_source_modules(modules, &public_paths);
+    // A runtime with no chunk-loading global of its own is attributed to the
+    // build without one only when no detected input names a global: with any
+    // named build on the page, it cannot be told which build it runs.
+    if detected_build_has_global {
+        undetected_runtimes.retain(|runtime| !runtime.chunk_loading_globals.is_empty());
+    }
+    let (modules, numeric_rewrite_plan) =
+        prepare_multi_source_modules(modules, &public_paths, &undetected_runtimes);
     let mut output = if raw {
         emit_raw_modules_with_numeric_rewrites(modules, numeric_rewrite_plan)?
     } else {

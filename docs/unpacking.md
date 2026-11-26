@@ -701,9 +701,20 @@ The split output has no runtime, so a kept `require.j` reads `undefined` in
 CommonJS output, and the conditional requires keep the module CommonJS.
 
 Detection records the ids each input's bootstraps assign
-(`webpack5_runtime_id.rs`): a statement-level `R.j = <literal>` in the input's
-top level or a top-level IIFE body, where `R` is a function declared in that
-body that also gets `R.m = <table>`. Before the rule pipeline, the driver
+(`webpack5_runtime_id.rs`): `R.j = <literal>` in the input's top level or a
+top-level IIFE body, where `R` is a function declared in that body that also
+gets `R.m = <table>`. Both assignments count in any expression position of
+the body's statements, since Terser merges bootstrap statements into an `if`
+test (`if (u.m = o, u.n = …, …) {…}`), a `return` argument, a declarator, or
+a `for` header (wild-observed); they do not count inside a nested function,
+arrow, or class, where a `.j` is not the runtime's id. A webpack 5
+runtime-only chunk (`optimization.runtimeChunk`) has an empty module table,
+so no detector splits it and it stays a plain input; its ids are still read,
+with the chunk-loading global it binds as its build identity. A runtime-only
+chunk that binds no global counts only when no detected input names one.
+Its own output does not change. A plain input that the public API's
+unmatched-input policy skips never reaches the driver, so its runtime does
+not count. Before the rule pipeline, the driver
 evaluates every such condition in a webpack 5 factory against the ids of the
 runtimes of the module's build among the inputs (the build identity of
 [cross-input rewrites](#driver-intake-and-raw-output); runtime reachability of

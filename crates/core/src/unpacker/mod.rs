@@ -1250,6 +1250,8 @@ pub(crate) enum PreparedSource {
     Plain {
         prepared: Option<PreparedModuleAst>,
         refusal: Option<refusal::SplitRefusal>,
+        /// The webpack 5 runtime the input holds without a module table.
+        webpack_runtime: Option<Box<webpack5_runtime_id::UndetectedWebpackRuntime>>,
     },
 }
 
@@ -1301,6 +1303,7 @@ pub(crate) fn try_prepare_source(
     let globals = Globals::new();
     let mut split_refusal = None;
     let mut link_facts = LazyHelperLinkFacts::default();
+    let mut webpack_runtime = None;
     let prepared = GLOBALS.set(&globals, || -> anyhow::Result<PreparedSourceParts> {
         let cm: Lrc<SourceMap> = Default::default();
         let (mut module, recoverable_parse_errors) = {
@@ -1318,6 +1321,8 @@ pub(crate) fn try_prepare_source(
                 return Ok(PreparedSourceParts::Bundle(Box::new(result)));
             }
             split_refusal = refused;
+            webpack_runtime =
+                webpack5_runtime_id::undetected_webpack_runtime(&module).map(Box::new);
         }
 
         if prepare_plain_ast || split_refusal.is_some() {
@@ -1353,10 +1358,12 @@ pub(crate) fn try_prepare_source(
                 recoverable_parse_errors,
             }),
             refusal: split_refusal,
+            webpack_runtime,
         },
         PreparedSourceParts::PlainUnprepared => PreparedSource::Plain {
             prepared: None,
             refusal: split_refusal,
+            webpack_runtime,
         },
     };
     Ok((source, link_facts))

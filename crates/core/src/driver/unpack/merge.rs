@@ -31,7 +31,7 @@ use super::filename_recovery::{rewrite_import_sources, rewrite_import_sources_af
 use crate::module_path::relative_import_specifier;
 use crate::unpacker::webpack4::{fake_namespace_mode_loads_id, require_id_arg_index};
 use crate::unpacker::webpack5_runtime_id::{
-    fold_runtime_id_conditions, RuntimeIdFoldRefusal, WebpackRuntimeId,
+    fold_runtime_id_conditions, RuntimeIdFoldRefusal, UndetectedWebpackRuntime, WebpackRuntimeId,
 };
 use crate::unpacker::UnpackedModule;
 use crate::unpacker::{DetectedModuleFailure, DetectedModuleNote, PreparedModuleAst};
@@ -402,6 +402,7 @@ impl PlannedPublicPaths {
 pub(super) fn prepare_multi_source_modules(
     mut modules: Vec<MultiSourceModule>,
     public_paths: &PlannedPublicPaths,
+    undetected_runtimes: &[UndetectedWebpackRuntime],
 ) -> (Vec<PreparedUnpackModule>, NumericRewritePlan) {
     let span = tracing::info_span!("prepare_multi_source_modules", count = modules.len());
     let _enter = span.enter();
@@ -435,7 +436,7 @@ pub(super) fn prepare_multi_source_modules(
         string_module_id_targets(&modules),
     );
     let has_rewrites = !numeric_rewrite_plan.is_empty();
-    let runtimes = webpack_runtimes(&modules);
+    let runtimes = webpack_runtimes(&modules, undetected_runtimes);
 
     let modules = modules
         .into_iter()
@@ -498,8 +499,13 @@ pub(super) fn prepare_multi_source_modules(
     (modules, numeric_rewrite_plan)
 }
 
-/// Each input's webpack 5 runtime ids with the input's build identity.
-fn webpack_runtimes(modules: &[MultiSourceModule]) -> Vec<(Arc<[String]>, WebpackRuntimeId)> {
+/// Each input's webpack 5 runtime ids with the input's build identity: the
+/// detected inputs' from their modules, and those of the inputs no detector
+/// split (a runtime-only chunk) from `undetected_runtimes`.
+fn webpack_runtimes(
+    modules: &[MultiSourceModule],
+    undetected_runtimes: &[UndetectedWebpackRuntime],
+) -> Vec<(Arc<[String]>, WebpackRuntimeId)> {
     let mut seen_inputs = HashSet::default();
     let mut runtimes = Vec::new();
     for module in modules {
@@ -510,6 +516,12 @@ fn webpack_runtimes(modules: &[MultiSourceModule]) -> Vec<(Arc<[String]>, Webpac
         }
         for id in module.webpack_runtime_ids.iter() {
             runtimes.push((module.chunk_loading_globals.clone(), id.clone()));
+        }
+    }
+    for runtime in undetected_runtimes {
+        let build: Arc<[String]> = runtime.chunk_loading_globals.as_slice().into();
+        for id in &runtime.runtime_ids {
+            runtimes.push((build.clone(), id.clone()));
         }
     }
     runtimes
@@ -1383,7 +1395,7 @@ mod tests {
                 modules.push(detected("200", "module-other.js", "7.bundle.js"));
             }
             let (prepared, plan) =
-                prepare_multi_source_modules(modules, &PlannedPublicPaths::default());
+                prepare_multi_source_modules(modules, &PlannedPublicPaths::default(), &[]);
             let plain = |id| resolve_numeric_target(&plan.plain_id_targets[&id], &[]);
             let chunk = |id| {
                 plan.chunk_id_targets
@@ -1489,7 +1501,7 @@ mod tests {
         ];
 
         let (prepared, plan) =
-            prepare_multi_source_modules(modules, &PlannedPublicPaths::default());
+            prepare_multi_source_modules(modules, &PlannedPublicPaths::default(), &[]);
         assert!(
             prepared[0].module.code.contains("require(999)"),
             "prepare should keep source strings untouched"

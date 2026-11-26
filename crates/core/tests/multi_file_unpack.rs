@@ -5845,6 +5845,139 @@ fn webpack5_runtime_id_fold_ignores_j_on_other_bindings() {
     );
 }
 
+fn unpack_sources(files: &[(&str, String)]) -> wakaru_core::driver::test_support::UnpackOutput {
+    unpack_files(
+        files
+            .iter()
+            .map(|(filename, source)| UnpackInput {
+                filename: filename.to_string(),
+                source: source.clone(),
+            })
+            .collect(),
+        DecompileOptions::default(),
+    )
+    .expect("unpack should succeed")
+}
+
+#[test]
+fn webpack5_runtime_id_assigned_inside_an_if_test_folds() {
+    // A minifier merged the bootstrap's `t.m = e` and `t.j = 23` into `if`
+    // tests.
+    let runtime = runtime_with_id("23", "966")
+        .replace("t.m=e,", "if(t.m=e,0);")
+        .replace(",t.j=23,", ";if(t.j=23,!1);");
+    assert!(runtime.contains("if(t.m=e,0);") && runtime.contains("if(t.j=23,!1);"));
+    // The runtime is still detected: its ids come from the detected input.
+    assert_eq!(
+        unpack_sources(&[("entry0.js", runtime.clone())]).detected_formats,
+        [wakaru_core::BundleFormat::Webpack5]
+    );
+    let output = unpack_sources(&[
+        ("entry0.js", runtime),
+        ("shared.js", shared_chunk(SHARED_23)),
+    ]);
+    let shared = output_module(&output, "module-805.js");
+    assert!(
+        shared.contains("import { K } from \"./module-582.js\""),
+        "{shared}"
+    );
+    assert!(!shared.contains("require.j"), "{shared}");
+    assert!(
+        runtime_id_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
+}
+
+#[test]
+fn webpack5_runtime_id_set_in_a_nested_arrow_is_ignored() {
+    // `t.j = 695` runs in a callback, not as the runtime's own id.
+    let runtime = runtime_with_id("23", "966").replace(",t.j=23,", ",t.j=23,(()=>{t.j=695})(),");
+    assert!(runtime.contains("(()=>{t.j=695})()"));
+    let output = unpack_sources(&[
+        ("entry0.js", runtime),
+        ("shared.js", shared_chunk(SHARED_23)),
+    ]);
+    let shared = output_module(&output, "module-805.js");
+    assert!(shared.contains("export class A"), "{shared}");
+    assert!(!shared.contains("require.j"), "{shared}");
+    assert!(
+        runtime_id_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
+}
+
+/// A webpack 5 runtime-only chunk (`optimization.runtimeChunk`): an empty
+/// module table and JSONP chunk loading through `self.<global>`.
+fn runtime_only_chunk(runtime_id: &str, global: &str) -> String {
+    format!(
+        r#"(()=>{{"use strict";var e,r={{}},t={{}};function o(e){{var n=t[e];if(void 0!==n)return n.exports;var a=t[e]={{exports:{{}}}};return r[e](a,a.exports,o),a.exports}}o.m=r,e=[],o.O=(t,r,n,a)=>{{if(!r){{var l=1/0;for(f=0;f<e.length;f++){{for(var[r,n,a]=e[f],i=!0,s=0;s<r.length;s++)(!1&a||l>=a)&&Object.keys(o.O).every(e=>o.O[e](r[s]))?r.splice(s--,1):(i=!1,a<l&&(l=a));if(i){{e.splice(f--,1);var c=n();void 0!==c&&(t=c)}}}}return t}}a=a||0;for(var f=e.length;f>0&&e[f-1][2]>a;f--)e[f]=e[f-1];e[f]=[r,n,a]}},o.d=(e,r)=>{{for(var t in r)o.o(r,t)&&!o.o(e,t)&&Object.defineProperty(e,t,{{enumerable:!0,get:r[t]}})}},o.o=(e,r)=>Object.prototype.hasOwnProperty.call(e,r),o.j={runtime_id},(()=>{{var e={{{runtime_id}:0}};o.O.j=r=>0===e[r];var r=(r,t)=>{{var n,a,[i,l,s]=t,u=0;if(i.some(r=>0!==e[r])){{for(n in l)o.o(l,n)&&(o.m[n]=l[n]);if(s)var c=s(o)}}for(r&&r(t);u<i.length;u++)a=i[u],o.o(e,a)&&e[a]&&e[a][0](),e[a]=0;return o.O(c)}},t=self.{global}=self.{global}||[];t.forEach(r.bind(null,0)),t.push=r.bind(null,t.push.bind(t))}})()}})();"#
+    )
+}
+
+/// A JSONP chunk pushing the shared module 805 (with `body` as its factory
+/// body) and module 582 into `self.<global>`.
+fn jsonp_shared_chunk(global: &str, body: &str) -> String {
+    format!(
+        r#"(self.{global}=self.{global}||[]).push([[804],{{805(r,i,a){{{body}}},582(e,r,t){{function n(e){{return"k:"+e}}t.d(r,{{K:()=>n}})}}}}]);"#
+    )
+}
+
+#[test]
+fn webpack5_runtime_id_from_a_runtime_only_chunk_folds() {
+    let runtime = runtime_only_chunk("23", "webpackChunk_demo");
+    let runtime_alone = unpack_sources(&[("runtime.js", runtime.clone())]);
+    assert!(
+        runtime_alone.detected_formats.is_empty(),
+        "{:?}",
+        runtime_alone.detected_formats
+    );
+    let output = unpack_sources(&[
+        ("runtime.js", runtime),
+        (
+            "shared.js",
+            jsonp_shared_chunk("webpackChunk_demo", SHARED_23),
+        ),
+    ]);
+    let shared = output_module(&output, "module-805.js");
+    assert!(
+        shared.contains("import { K } from \"./module-582.js\""),
+        "{shared}"
+    );
+    assert!(shared.contains("export class A"), "{shared}");
+    assert!(!shared.contains("require.j"), "{shared}");
+    assert!(
+        runtime_id_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
+    // The runtime-only chunk's own output is what it was alone.
+    let [(_, alone)] = runtime_alone.modules.as_slice() else {
+        panic!("{:?}", runtime_alone.modules);
+    };
+    assert_eq!(output_module(&output, "runtime.js"), alone);
+}
+
+#[test]
+fn webpack5_runtime_id_from_another_builds_runtime_only_chunk_does_not_count() {
+    let output = unpack_sources(&[
+        ("runtime.js", runtime_only_chunk("23", "webpackChunk_other")),
+        (
+            "shared.js",
+            jsonp_shared_chunk("webpackChunk_demo", SHARED_23),
+        ),
+    ]);
+    let shared = output_module(&output, "module-805.js");
+    assert!(shared.contains("require.j == 23"), "{shared}");
+    assert_eq!(
+        runtime_id_warnings(&output),
+        ["webpack runtime id `require.j` is kept in its runtime conditions: no webpack runtime of this build in the input sets the id; the split output does not define `require.j`, so these conditions read `undefined` when they run"],
+        "{:?}",
+        output.warnings
+    );
+}
+
 // Code splitting: esbuild, Bun, and rolldown declare the lazy-module helpers
 // in a shared chunk that every other chunk imports.
 const SPLIT_RUNTIME_OBJECT_HELPERS: &str = r#"var __getOwnPropNames = Object.getOwnPropertyNames;

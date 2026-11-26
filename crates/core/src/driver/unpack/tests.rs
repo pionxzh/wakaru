@@ -245,6 +245,7 @@ fn prepared_raw_scope_split_keeps_runnable_normalization() {
         refusal: None,
         lazy_helper_exports: Vec::new(),
         helper_link: None,
+        webpack_runtime: None,
     };
 
     let output = unpack_prepared_inputs(vec![input], DecompileOptions::default(), true, false)
@@ -288,6 +289,7 @@ fn unprovable_public_boundary_falls_back_to_one_processed_module() {
         refusal: None,
         lazy_helper_exports: Vec::new(),
         helper_link: None,
+        webpack_runtime: None,
     };
     let sibling = prepare_unpack_input(
         "consumer.js".to_string(),
