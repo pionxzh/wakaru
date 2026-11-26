@@ -18,6 +18,7 @@ pub mod webpack4;
 mod webpack4_module_decorator;
 pub mod webpack5;
 mod webpack5_cw;
+pub(crate) mod webpack5_runtime_id;
 mod webpack_common;
 mod wrappers;
 
@@ -911,6 +912,10 @@ pub(crate) struct DetectedBundle {
     /// Names of the chunk-loading globals the input pushes into or binds as a
     /// runtime: the input's build identity for cross-input module-id rewrites.
     pub(crate) chunk_loading_globals: Vec<String>,
+    /// The ids the input's webpack 5 runtimes assign to
+    /// `__webpack_require__.j`, for folding runtime-id conditions in shared
+    /// modules.
+    pub(crate) webpack_runtime_ids: Vec<webpack5_runtime_id::WebpackRuntimeId>,
     /// Statically extracted webpack chunk-reference surface, when one was
     /// found. Populated only for the dedicated debug inspection path and
     /// never consumed by module recovery.
@@ -935,6 +940,7 @@ impl DetectedBundle {
             script_modules: Default::default(),
             chunk_ids: Default::default(),
             chunk_loading_globals: Vec::new(),
+            webpack_runtime_ids: Vec::new(),
             chunk_enumeration: None,
             input_has_esm_declarations: false,
             materialize_cm: None,
@@ -962,6 +968,7 @@ impl DetectedBundle {
             script_modules: Default::default(),
             chunk_ids: Default::default(),
             chunk_loading_globals: Vec::new(),
+            webpack_runtime_ids: Vec::new(),
             chunk_enumeration: None,
             input_has_esm_declarations: false,
             materialize_cm: Some(materialize_cm),
@@ -1413,6 +1420,7 @@ fn finish_detected(
 ) -> DetectedBundle {
     result.chunk_ids = webpack5::detect_chunk_ids_from_module(module);
     result.chunk_loading_globals = chunk_loading_global::chunk_loading_globals(module);
+    result.webpack_runtime_ids = webpack5_runtime_id::webpack_runtime_ids(module);
     result.input_has_esm_declarations = module
         .body
         .iter()
@@ -1449,6 +1457,7 @@ fn detect_parsed_module(
     }) {
         result.chunk_ids = chunk_ids;
         result.chunk_loading_globals = chunk_loading_global::chunk_loading_globals(module);
+        result.webpack_runtime_ids = webpack5_runtime_id::webpack_runtime_ids(module);
         result.input_has_esm_declarations = input_has_esm_declarations;
         return Some(result);
     }
@@ -1461,6 +1470,7 @@ fn detect_parsed_module(
             result.chunk_ids = chunk_ids;
             // The unwrapped body holds the chunk push a wrapper hid from the top level.
             result.chunk_loading_globals = chunk_loading_global::chunk_loading_globals(&candidate);
+            result.webpack_runtime_ids = webpack5_runtime_id::webpack_runtime_ids(&candidate);
             result.input_has_esm_declarations = input_has_esm_declarations;
             if collect_chunk_enumeration {
                 let unresolved_mark = resolve_chunk_enumeration_module(&mut candidate);
@@ -1483,6 +1493,7 @@ fn detect_parsed_module(
         let mut detected = DetectedBundle::from_result(result);
         detected.chunk_ids = chunk_ids;
         detected.chunk_loading_globals = chunk_loading_global::chunk_loading_globals(module);
+        detected.webpack_runtime_ids = webpack5_runtime_id::webpack_runtime_ids(module);
         detected.input_has_esm_declarations = input_has_esm_declarations;
         detected
     })

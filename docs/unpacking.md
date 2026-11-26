@@ -656,6 +656,44 @@ exports is an ES module, so its code then runs in strict mode. esbuild's
 minifier writes its helpers this way before every chunk push (producer
 `esbuild@0.25.0 --minify --keep-names` over a webpack chunk).
 
+### Webpack 5 runtime-id conditions
+
+A module that several entry runtimes share can test which runtime is
+running: `if (23 == r.j) var a = r(582)`, `e.A = 23 == r.j ? class {} : null`,
+the `===`, `!=`, and `!==` forms, string ids (`"main" == r.j`), and, for
+many runtimes, `/^(23|695)$/.test(r.j)` with nested groups
+(`/^(1(143|92)|2(341|723))$/`) (producer `webpack@5.111` with Terser, two
+entries sharing a chunk). `r` is the factory's loader parameter. Each entry
+runtime assigns its own id in its bootstrap (`__webpack_require__.j = 23`).
+The split output has no runtime, so a kept `require.j` reads `undefined` in
+CommonJS output, and the conditional requires keep the module CommonJS.
+
+Detection records the ids each input's bootstraps assign
+(`webpack5_runtime_id.rs`): a statement-level `R.j = <literal>` in the input's
+top level or a top-level IIFE body, where `R` is a function declared in that
+body that also gets `R.m = <table>`. Before the rule pipeline, the driver
+evaluates every such condition in a webpack 5 factory against the ids of the
+runtimes of the module's build among the inputs (the build identity of
+[cross-input rewrites](#driver-intake-and-raw-output); runtime reachability of
+each module is not modeled). Only a `.j` read on the free `require` counts:
+extraction renamed the loader parameter to it and refuses a factory where a
+free `require` is used other than as a call, so a shadowing local `require`
+or an `o.j` stays as it is. `==` follows JavaScript loose equality
+(`23 == "23"`), `===` does not, and a regex is matched for real over the
+grammar webpack emits (literal characters, escapes, groups, `|`, character
+classes); a regex with flags or any other syntax is not a condition.
+
+When every runtime gives the same result for every condition of the module,
+an `if` keeps only the taken branch (a `var` the dropped branch declares
+stays as a bare `var`; a dropped branch that declares a function keeps its
+`if`), a `?:` keeps the taken operand, and any other condition becomes
+`true` or `false`. The requires then become unconditional and `UnEsm` can
+turn the module into ESM. A branch that no runtime among the inputs takes is
+dropped on purpose: code for runtimes absent from the input is not kept.
+When the runtimes disagree, or no runtime of the build is among the inputs
+(for example, a runtime inlined in HTML), the module is left as it was, with
+a non-error `runtime_residual` warning. Raw output keeps the conditions.
+
 ## Turbopack
 
 Turbopack production chunks register factories into a runtime shared by

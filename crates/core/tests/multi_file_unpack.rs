@@ -5634,3 +5634,213 @@ fn minified_esbuild_object_helpers_exported_in_place_recover_spread_and_rest() {
     );
     assert_valid_module_graph(&modules);
 }
+
+// Webpack 5 runtime-id conditions (`__webpack_require__.j`) in a module that
+// several entry runtimes share.
+
+/// A webpack 5 entry runtime (CommonJS chunk loading) whose `.j` is
+/// `runtime_id`. Its own table holds module 582, which the shared module
+/// loads under a runtime condition.
+fn runtime_with_id(runtime_id: &str, entry_id: &str) -> String {
+    format!(
+        r#"(()=>{{"use strict";var e={{{entry_id}(e,r,t){{var s=t(805);globalThis.sink=s.A}},582(e,r,t){{function n(e){{return"k:"+e}}t.d(r,{{K:()=>n}})}}}};const r={{}};function t(o){{const n=r[o];if(void 0!==n)return n.exports;const s=r[o]={{exports:{{}}}};return e[o](s,s.exports,t),s.exports}}t.m=e,t.x=()=>{{let e=t.O(void 0,[804],()=>t({entry_id}));return e=t.O(e),e}},(()=>{{const e=[];t.O=(r,o,n)=>{{if(!o){{for(var s=0;s<e.length;s++){{let[o,n]=e[s],u=!0;for(var i=0;i<o.length;i++)t.O.require(o[i])?o.splice(i--,1):u=!1;if(u){{e.splice(s--,1);const t=n();void 0!==t&&(r=t)}}}}return r}}e.push([o,n])}}}})(),t.d=(e,r)=>{{for(var o in r)t.o(r,o)&&!t.o(e,o)&&Object.defineProperty(e,o,{{enumerable:!0,get:r[o]}})}},t.f={{}},t.e=e=>{{const r=[];return t.f.require(e,r),Promise.all(r)}},t.u=e=>"shared.js",t.o=(e,r)=>Object.prototype.hasOwnProperty.call(e,r),t.j={runtime_id},(()=>{{const e={{{runtime_id}:1}};t.O.require=r=>e[r],t.f.require=(r,o)=>{{if(!e[r]){{const o=require("./"+t.u(r));e[r]||(r=>{{const o=r.modules,n=r.ids,s=r.runtime;for(var i in o)t.o(o,i)&&(t.m[i]=o[i]);s&&s(t);for(var u=0;u<n.length;u++)e[n[u]]=1;t.O()}})(o)}}}}}})(),(()=>{{const e=t.x;t.x=()=>(t.e(804),e())}})(),t.x()}})();"#
+    )
+}
+
+/// A CommonJS webpack 5 chunk holding the shared module 805 with `body` as
+/// its factory body (`r, i, a` = module, exports, require).
+fn shared_chunk(body: &str) -> String {
+    format!(r#""use strict";exports.ids=[804],exports.modules={{805(r,i,a){{{body}}}}};"#)
+}
+
+fn unpack_runtime_inputs(
+    runtimes: &[(&str, &str)],
+    shared_body: &str,
+    emit_source_map: bool,
+) -> wakaru_core::driver::test_support::UnpackOutput {
+    let mut inputs = runtimes
+        .iter()
+        .enumerate()
+        .map(|(index, (runtime_id, entry_id))| UnpackInput {
+            filename: format!("entry{index}.js"),
+            source: runtime_with_id(runtime_id, entry_id),
+        })
+        .collect::<Vec<_>>();
+    inputs.push(UnpackInput {
+        filename: "shared.js".into(),
+        source: shared_chunk(shared_body),
+    });
+    unpack_files(
+        inputs,
+        DecompileOptions {
+            emit_source_map,
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed")
+}
+
+fn output_module<'a>(
+    output: &'a wakaru_core::driver::test_support::UnpackOutput,
+    name: &str,
+) -> &'a str {
+    &output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == name)
+        .unwrap_or_else(|| panic!("missing {name}: {:?}", output.modules))
+        .1
+}
+
+fn runtime_id_warnings(output: &wakaru_core::driver::test_support::UnpackOutput) -> Vec<&str> {
+    output
+        .warnings
+        .iter()
+        .filter(|warning| warning.message.contains("runtime id `require.j`"))
+        .map(|warning| warning.message.as_str())
+        .collect()
+}
+
+const SHARED_23: &str = "if(23==a.j)var j=a(582);i.A=23==a.j?class{run(e){return j.K(e)}}:null";
+
+#[test]
+fn webpack5_runtime_id_conditions_fold_for_the_only_runtime() {
+    for emit_source_map in [false, true] {
+        let output = unpack_runtime_inputs(&[("23", "966")], SHARED_23, emit_source_map);
+        let shared = output_module(&output, "module-805.js");
+        assert!(
+            shared.contains("import { K } from \"./module-582.js\""),
+            "{shared}"
+        );
+        assert!(shared.contains("export class A"), "{shared}");
+        assert!(!shared.contains("require.j"), "{shared}");
+        assert!(!shared.contains("if ("), "{shared}");
+        assert!(
+            runtime_id_warnings(&output).is_empty(),
+            "{:?}",
+            output.warnings
+        );
+        assert_valid_module_graph(&output.modules);
+    }
+}
+
+#[test]
+fn webpack5_runtime_id_condition_no_runtime_takes_is_dropped() {
+    let output = unpack_runtime_inputs(&[("695", "966")], SHARED_23, false);
+    let shared = output_module(&output, "module-805.js");
+    assert!(!shared.contains("module-582"), "{shared}");
+    assert!(!shared.contains("class"), "{shared}");
+    assert!(shared.contains("null"), "{shared}");
+    assert!(shared.contains("export"), "{shared}");
+    assert!(!shared.contains("require.j"), "{shared}");
+    assert!(
+        runtime_id_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
+}
+
+#[test]
+fn webpack5_runtime_id_regex_with_nested_groups_folds() {
+    let body = "if(/^(1(143|92)|2(341|723))$/.test(a.j))var j=a(582);i.A=!/^(1(143|92)|2(341|723))$/.test(a.j)?null:class{run(e){return j.K(e)}}";
+    let output = unpack_runtime_inputs(&[("192", "966")], body, false);
+    let shared = output_module(&output, "module-805.js");
+    assert!(
+        shared.contains("import { K } from \"./module-582.js\""),
+        "{shared}"
+    );
+    assert!(shared.contains("export class A"), "{shared}");
+    assert!(!shared.contains(".test("), "{shared}");
+
+    // `1341` is no id of the pattern: the nested groups do not match it.
+    let output = unpack_runtime_inputs(&[("1341", "966")], body, false);
+    let shared = output_module(&output, "module-805.js");
+    assert!(!shared.contains("module-582"), "{shared}");
+    assert!(!shared.contains("class"), "{shared}");
+    assert!(!shared.contains(".test("), "{shared}");
+}
+
+#[test]
+fn webpack5_runtime_id_string_ids_follow_loose_and_strict_equality() {
+    let body = r#"if("main"==a.j)var j=a(582);if("main"!==a.j)var k=a(582);i.A="main"===a.j?class{run(e){return j.K(e)}}:null"#;
+    let output = unpack_runtime_inputs(&[(r#""main""#, "966")], body, false);
+    let shared = output_module(&output, "module-805.js");
+    assert!(shared.contains("export class A"), "{shared}");
+    assert!(!shared.contains("require.j"), "{shared}");
+
+    // `23 == "23"` is true, `23 === "23"` is false.
+    let body = "if(23==a.j)var j=a(582);i.A=23===a.j?null:class{run(e){return j.K(e)}}";
+    let output = unpack_runtime_inputs(&[(r#""23""#, "966")], body, false);
+    let shared = output_module(&output, "module-805.js");
+    assert!(
+        shared.contains("import { K } from \"./module-582.js\""),
+        "{shared}"
+    );
+    assert!(shared.contains("export class A"), "{shared}");
+    assert!(!shared.contains("require.j"), "{shared}");
+}
+
+#[test]
+fn webpack5_runtime_id_conditions_fold_when_two_runtimes_agree() {
+    let body =
+        "if(/^(23|695)$/.test(a.j))var j=a(582);i.A=17!=a.j?class{run(e){return j.K(e)}}:null";
+    let output = unpack_runtime_inputs(&[("23", "966"), ("695", "967")], body, false);
+    let shared = output_module(&output, "module-805.js");
+    assert!(shared.contains("export class A"), "{shared}");
+    assert!(!shared.contains("require.j"), "{shared}");
+    assert!(!shared.contains("if ("), "{shared}");
+    assert!(
+        runtime_id_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
+}
+
+#[test]
+fn webpack5_runtime_id_conditions_stay_when_runtimes_disagree() {
+    let output = unpack_runtime_inputs(&[("23", "966"), ("695", "967")], SHARED_23, false);
+    let shared = output_module(&output, "module-805.js");
+    assert!(shared.contains("require.j == 23"), "{shared}");
+    assert_eq!(
+        runtime_id_warnings(&output),
+        ["webpack runtime id `require.j` is kept in its runtime conditions: the runtimes of this build in the input (`23`, `695`) take different branches; the split output does not define `require.j`, so these conditions read `undefined` when they run"],
+        "{:?}",
+        output.warnings
+    );
+}
+
+#[test]
+fn webpack5_runtime_id_conditions_stay_without_a_runtime() {
+    let output = unpack_files(
+        vec![UnpackInput {
+            filename: "shared.js".into(),
+            source: shared_chunk(SHARED_23),
+        }],
+        DecompileOptions::default(),
+    )
+    .expect("unpack should succeed");
+    let shared = output_module(&output, "module-805.js");
+    assert!(shared.contains("require.j == 23"), "{shared}");
+    assert_eq!(
+        runtime_id_warnings(&output),
+        ["webpack runtime id `require.j` is kept in its runtime conditions: no webpack runtime of this build in the input sets the id; the split output does not define `require.j`, so these conditions read `undefined` when they run"],
+        "{:?}",
+        output.warnings
+    );
+}
+
+#[test]
+fn webpack5_runtime_id_fold_ignores_j_on_other_bindings() {
+    // `o.j` is an object property, and the inner `a` shadows the loader.
+    let body = "var o={j:23};function f(a){return 23==a.j}i.A=23==o.j?f:null";
+    let output = unpack_runtime_inputs(&[("23", "966")], body, false);
+    let shared = output_module(&output, "module-805.js");
+    assert!(shared.contains("o.j"), "{shared}");
+    assert!(shared.contains("a.j"), "{shared}");
+    assert!(!shared.contains("true"), "{shared}");
+    assert!(
+        runtime_id_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
+}

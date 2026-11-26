@@ -652,6 +652,14 @@ only one copy of it, links the call. A loader behind a chunk load
 (`require.e(chunk).then(() => require(id))`) is covered by the `require.e`
 report instead.
 
+Unpack also reports `runtime_residual` for a webpack 5 module shared by
+several entry runtimes that keeps its tests of the runtime id
+(`require.j == 23`, `/^(23|695)$/.test(require.j)`). Wakaru folds those
+tests when every runtime of the build among the inputs takes the same
+branches. The message says why it did not: no runtime of the build is among
+the inputs, or the runtimes take different branches. Passing the entry file
+that holds the runtime folds them in the first case.
+
 ## Overwrite protection
 
 Wakaru refuses to overwrite existing files unless `--force` is passed.

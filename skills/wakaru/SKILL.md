@@ -292,7 +292,9 @@ reachability sweep is desired.
   the id is in no input, in an opaque module, or in several modules of the
   build). Read the module normally; only that call is unresolved. For
   webpack, check that the chunk file holding the loaded module is among the
-  inputs, once.
+  inputs, once. A webpack 5 module can also keep `require.j` (runtime id)
+  tests: pass the entry file holding its runtime, or read both branches when
+  the message says the runtimes take different branches.
 - `failed` in unpack JSON counts distinct modules with at least one
   error-class warning (decompile failures, declaration conflicts, output parse
   failures); `total` is the module count. `failed > 0` always comes with a

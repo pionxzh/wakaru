@@ -36,7 +36,8 @@ use super::filename_recovery::{
 use super::interop_report::import_forms;
 use super::link_check::{collect_link_report, collect_missing_imported_name_warnings, LinkReport};
 use super::merge::{
-    apply_filename_rewrites, apply_numeric_rewrites, NumericRewritePlan, PreparedUnpackModule,
+    apply_filename_rewrites, apply_numeric_rewrites, apply_runtime_id_fold, NumericRewritePlan,
+    PreparedUnpackModule,
 };
 use super::schedule::par_map_largest_first;
 use super::source_index::{build_composed_output_sourcemap, InputOrigin};
@@ -235,7 +236,7 @@ struct Phase1aModule {
     /// The sources whose required value may become `module.exports`, on
     /// the AST `UnEsm` will see.
     exports_from_requires: Vec<swc_core::atoms::Atom>,
-    warning: Option<UnpackWarning>,
+    warnings: Vec<UnpackWarning>,
     input_parse_warnings: Vec<UnpackWarning>,
     suggested_filename: Option<String>,
 }
@@ -545,7 +546,7 @@ struct Phase1Module {
     filename: String,
     facts: crate::facts::ModuleFacts,
     prepared: Option<Phase1PreparedModule>,
-    warning: Option<UnpackWarning>,
+    warnings: Vec<UnpackWarning>,
     input_parse_warnings: Vec<UnpackWarning>,
     /// Original source filename recovered from provenance markers (Sentry
     /// `data-sentry-source-file`), if any. Used at the barrier to rename the
@@ -771,7 +772,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 filename: unpacked.module.filename.clone(),
                 facts: crate::facts::ModuleFacts::default(),
                 prepared: None,
-                warning: Some(detector_failure_warning(&unpacked.module.filename, failure)),
+                warnings: vec![detector_failure_warning(&unpacked.module.filename, failure)],
                 input_parse_warnings: Vec::new(),
                 suggested_filename: None,
             }));
@@ -858,12 +859,22 @@ pub(super) fn unpack_multi_module_with_plan(
                 unresolved_mark,
                 unpacked.filename_rewrite.as_ref(),
             );
-            let residual_warning = apply_numeric_rewrites(
+            // Before the rules, so dead-branch cleanup and `UnEsm` see the
+            // folded conditions.
+            let mut warnings: Vec<UnpackWarning> = apply_runtime_id_fold(
+                &mut module,
+                unresolved_mark,
+                unpacked.runtime_id_fold.as_ref(),
+                &unpacked.module.filename,
+            )
+            .into_iter()
+            .collect();
+            warnings.extend(apply_numeric_rewrites(
                 &mut module,
                 unresolved_mark,
                 unpacked.numeric_rewrite.as_ref(),
                 &numeric_rewrite_plan,
-            );
+            ));
             normalize_webpack_commonjs_runtime(
                 &mut module,
                 unresolved_mark,
@@ -957,7 +968,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 required_whole_value,
                 passthrough,
                 exports_from_requires,
-                residual_warning,
+                warnings,
                 suggested_filename,
             ))
         });
@@ -974,7 +985,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 required_whole_value,
                 passthrough,
                 exports_from_requires,
-                warning,
+                warnings,
                 suggested_filename,
             )) => Phase1a::Pending(Box::new(Phase1aModule {
                 filename: unpacked.module.filename.clone(),
@@ -991,7 +1002,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 required_whole_value,
                 passthrough,
                 exports_from_requires,
-                warning,
+                warnings,
                 input_parse_warnings,
                 suggested_filename,
             })),
@@ -999,7 +1010,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 filename: unpacked.module.filename.clone(),
                 facts: crate::facts::ModuleFacts::default(),
                 prepared: None,
-                warning: Some(warning),
+                warnings: vec![warning],
                 input_parse_warnings,
                 suggested_filename: None,
             })),
@@ -1024,7 +1035,7 @@ pub(super) fn unpack_multi_module_with_plan(
             required_whole_value: _,
             passthrough: _,
             exports_from_requires: _,
-            warning,
+            warnings,
             input_parse_warnings,
             suggested_filename,
         } = *pending;
@@ -1174,7 +1185,7 @@ pub(super) fn unpack_multi_module_with_plan(
             filename,
             facts,
             prepared,
-            warning,
+            warnings,
             input_parse_warnings,
             suggested_filename,
         }
@@ -1238,9 +1249,7 @@ pub(super) fn unpack_multi_module_with_plan(
         module_facts.insert(&phase1_module.filename, phase1_module.facts);
         prepared_modules.push(phase1_module.prepared);
         prepared_parse_warnings.push(phase1_module.input_parse_warnings);
-        if let Some(w) = phase1_module.warning {
-            warnings.push(w);
-        }
+        warnings.extend(phase1_module.warnings);
     }
 
     module_facts.propagate_relayed_helper_exports();
@@ -1697,7 +1706,13 @@ pub(super) fn unpack_multi_module_with_plan(
                     unresolved_mark,
                     unpacked.filename_rewrite.as_ref(),
                 );
-                // Phase 1 already reported the calls this keeps.
+                // Phase 1 already reported what these two keep.
+                let _ = apply_runtime_id_fold(
+                    &mut module,
+                    unresolved_mark,
+                    unpacked.runtime_id_fold.as_ref(),
+                    &unpacked.module.filename,
+                );
                 let _ = apply_numeric_rewrites(
                     &mut module,
                     unresolved_mark,

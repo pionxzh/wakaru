@@ -262,7 +262,9 @@ loading or path resolution through `__turbopack_context__`, or webpack's
 `require.e` and `require.t` around a lazy `import()` whose chunk was not among
 the inputs. It also lists webpack `require(id)` calls whose module id the
 output does not link: in no input, in an opaque module, or in several modules
-of the build. The rest of the module is recovered.
+of the build, and webpack 5 tests of the runtime id (`require.j`) that it
+could not fold because no runtime of the build was among the inputs or the
+runtimes take different branches. The rest of the module is recovered.
 
 ## Run under a memory limit
 

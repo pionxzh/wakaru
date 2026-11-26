@@ -30,6 +30,9 @@ use super::super::types::{
 use super::filename_recovery::{rewrite_import_sources, rewrite_import_sources_after_move};
 use crate::module_path::relative_import_specifier;
 use crate::unpacker::webpack4::{fake_namespace_mode_loads_id, require_id_arg_index};
+use crate::unpacker::webpack5_runtime_id::{
+    fold_runtime_id_conditions, RuntimeIdFoldRefusal, WebpackRuntimeId,
+};
 use crate::unpacker::UnpackedModule;
 use crate::unpacker::{DetectedModuleFailure, DetectedModuleNote, PreparedModuleAst};
 use crate::utils::paren::{strip_parens, strip_parens_mut};
@@ -72,6 +75,12 @@ pub(super) struct MultiSourceModule {
     /// binds as a runtime (empty when it shows none). A module-id reference only
     /// links to a module of the same build.
     chunk_loading_globals: Arc<[String]>,
+    /// The ids the module's input assigns to `__webpack_require__.j` in its
+    /// webpack 5 runtimes (shared by every module of that input).
+    webpack_runtime_ids: Arc<[WebpackRuntimeId]>,
+    /// A normalized webpack 5 factory, whose free `require` is its loader
+    /// parameter: its runtime-id conditions may be folded.
+    webpack5_factory: bool,
     input_filename: String,
     input_group: String,
     input: Option<PreparedInputId>,
@@ -139,6 +148,8 @@ impl MultiSourceModule {
             external_consumers: false,
             chunk_ids: chunk_ids.into(),
             chunk_loading_globals: Arc::default(),
+            webpack_runtime_ids: Arc::default(),
+            webpack5_factory: false,
             input_filename,
             input_group,
             input,
@@ -147,6 +158,16 @@ impl MultiSourceModule {
 
     pub(super) fn with_chunk_loading_globals(mut self, globals: Arc<[String]>) -> Self {
         self.chunk_loading_globals = globals;
+        self
+    }
+
+    pub(super) fn with_webpack_runtime_ids(
+        mut self,
+        ids: Arc<[WebpackRuntimeId]>,
+        webpack5_factory: bool,
+    ) -> Self {
+        self.webpack_runtime_ids = ids;
+        self.webpack5_factory = webpack5_factory;
         self
     }
 
@@ -211,6 +232,8 @@ impl MultiSourceModule {
             external_consumers: false,
             chunk_ids: Arc::default(),
             chunk_loading_globals: Arc::default(),
+            webpack_runtime_ids: Arc::default(),
+            webpack5_factory: false,
             input_filename: String::new(),
             input_group: String::new(),
             input,
@@ -228,6 +251,9 @@ pub(super) struct PreparedUnpackModule {
     pub(super) webpack_numeric_module_id: Option<f64>,
     pub(super) webpack_legacy_module_i: bool,
     pub(super) restore_lifted_function_boundary: bool,
+    /// For a webpack 5 factory: the runtime ids of every runtime of its build
+    /// in the input, against which its runtime-id conditions are folded.
+    pub(super) runtime_id_fold: Option<Arc<[WebpackRuntimeId]>>,
     pub(super) numeric_rewrite: Option<NumericRewriteModuleContext>,
     pub(super) filename_rewrite: Option<FilenameRewriteModuleContext>,
     pub(super) report_import_cycle_warnings: bool,
@@ -250,6 +276,7 @@ impl PreparedUnpackModule {
             webpack_numeric_module_id: None,
             webpack_legacy_module_i: false,
             restore_lifted_function_boundary: false,
+            runtime_id_fold: None,
             numeric_rewrite: None,
             filename_rewrite: None,
             report_import_cycle_warnings: true,
@@ -274,6 +301,7 @@ impl PreparedUnpackModule {
             webpack_numeric_module_id: None,
             webpack_legacy_module_i: false,
             restore_lifted_function_boundary: false,
+            runtime_id_fold: None,
             numeric_rewrite: None,
             filename_rewrite: None,
             report_import_cycle_warnings,
@@ -407,12 +435,15 @@ pub(super) fn prepare_multi_source_modules(
         string_module_id_targets(&modules),
     );
     let has_rewrites = !numeric_rewrite_plan.is_empty();
+    let runtimes = webpack_runtimes(&modules);
 
     let modules = modules
         .into_iter()
         .zip(original_filenames)
         .map(|(module, original_filename)| {
             let reserved_public_path = public_paths.module_holds_reserved_path(&module);
+            let runtime_id_fold = (module.webpack5_factory && module.detector_failure.is_none())
+                .then(|| build_runtime_ids(&runtimes, &module.chunk_loading_globals));
             // A webpack factory always gets a context: its unresolved loader
             // calls are kept and reported even when nothing links.
             let numeric_rewrite = if (has_rewrites || module.webpack_commonjs_runtime)
@@ -454,6 +485,7 @@ pub(super) fn prepare_multi_source_modules(
                 webpack_numeric_module_id: module.webpack_numeric_module_id,
                 webpack_legacy_module_i: module.webpack_legacy_module_i,
                 restore_lifted_function_boundary: module.restore_lifted_function_boundary,
+                runtime_id_fold,
                 numeric_rewrite,
                 filename_rewrite,
                 report_import_cycle_warnings: module.report_import_cycle_warnings,
@@ -464,6 +496,70 @@ pub(super) fn prepare_multi_source_modules(
         .collect();
 
     (modules, numeric_rewrite_plan)
+}
+
+/// Each input's webpack 5 runtime ids with the input's build identity.
+fn webpack_runtimes(modules: &[MultiSourceModule]) -> Vec<(Arc<[String]>, WebpackRuntimeId)> {
+    let mut seen_inputs = HashSet::default();
+    let mut runtimes = Vec::new();
+    for module in modules {
+        if module.webpack_runtime_ids.is_empty()
+            || !seen_inputs.insert((module.input, module.input_filename.as_str()))
+        {
+            continue;
+        }
+        for id in module.webpack_runtime_ids.iter() {
+            runtimes.push((module.chunk_loading_globals.clone(), id.clone()));
+        }
+    }
+    runtimes
+}
+
+/// The distinct runtime ids of the runtimes that share `build`. A runtime of
+/// an unrelated build on the same page never loads this module.
+fn build_runtime_ids(
+    runtimes: &[(Arc<[String]>, WebpackRuntimeId)],
+    build: &[String],
+) -> Arc<[WebpackRuntimeId]> {
+    let mut ids: Vec<WebpackRuntimeId> = Vec::new();
+    for (runtime_build, id) in runtimes {
+        if same_build(runtime_build, build) && !ids.contains(id) {
+            ids.push(id.clone());
+        }
+    }
+    ids.into()
+}
+
+/// Fold the module's webpack 5 runtime-id conditions (see
+/// [`crate::unpacker::webpack5_runtime_id`]) and return the warning when they
+/// stay in place.
+pub(super) fn apply_runtime_id_fold(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    runtime_ids: Option<&Arc<[WebpackRuntimeId]>>,
+    filename: &str,
+) -> Option<UnpackWarning> {
+    let runtime_ids = runtime_ids?;
+    let refusal = fold_runtime_id_conditions(module, unresolved_mark, runtime_ids).err()?;
+    let reason = match refusal {
+        RuntimeIdFoldRefusal::NoRuntime => {
+            "no webpack runtime of this build in the input sets the id".to_string()
+        }
+        RuntimeIdFoldRefusal::Disagree(ids) => format!(
+            "the runtimes of this build in the input ({}) take different branches",
+            ids.iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+    Some(UnpackWarning::new(
+        filename,
+        UnpackWarningKind::RuntimeResidual,
+        format!(
+            "webpack runtime id `require.j` is kept in its runtime conditions: {reason}; the split output does not define `require.j`, so these conditions read `undefined` when they run"
+        ),
+    ))
 }
 
 pub(super) fn apply_filename_rewrites(

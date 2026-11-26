@@ -5336,7 +5336,7 @@ fn extract_iife_stmt_body(stmt: &Stmt) -> Option<&swc_core::ecma::ast::FunctionB
     extract_iife_body(expr)
 }
 
-fn extract_iife_body(expr: &Expr) -> Option<&swc_core::ecma::ast::FunctionBody> {
+pub(super) fn extract_iife_body(expr: &Expr) -> Option<&swc_core::ecma::ast::FunctionBody> {
     let call = match strip_parens(expr) {
         Expr::Call(call) => call,
         Expr::Unary(unary) if unary.op == UnaryOp::Bang => {
