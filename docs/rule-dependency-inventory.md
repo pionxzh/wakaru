@@ -741,7 +741,10 @@ rationale, or level gating appear.
   name with the iterable is renamed inside the loop (`for (const e of e)`
   would evaluate the iterable in the element's TDZ); this applies to every
   for-of recovery path, not only `for await`.
-- **UnUndefinedInit** — needs RemoveVoid; feeds VarDeclToLetConst.
+- **UnUndefinedInit** — needs RemoveVoid; feeds VarDeclToLetConst. It keeps
+  `= undefined` on a `var` in a loop body, where the initializer resets the
+  binding every iteration; VarDeclToLetConst drops it when that declaration
+  becomes `let`, and keeps a bare loop-body `var` that is assigned as `var`.
 - **UnPrototypeClass** — standard and above; a constructor whose members the
   scope enumerates stays a function (`prototype_methods_not_enumerated`). Runs
   before ArrowFunction so Closure Compiler's

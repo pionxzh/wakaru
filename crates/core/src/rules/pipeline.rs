@@ -556,7 +556,7 @@ runner!(run_merge_declaration_init, |ctx| MergeDeclarationInit::new(
     ctx.rewrite_level
 ));
 runner!(run_var_decl_to_let_const, |ctx| {
-    VarDeclToLetConst::new_with_level(ctx.rewrite_level)
+    VarDeclToLetConst::new_with_level(ctx.unresolved_mark, ctx.rewrite_level)
 });
 runner!(
     run_class_expression_to_declaration,

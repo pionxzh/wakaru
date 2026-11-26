@@ -1,6 +1,7 @@
 use crate::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
+use swc_core::common::Mark;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignTarget, BlockStmt, CatchClause, Class, Decl, ExportSpecifier,
     Expr, ForHead, ForInStmt, ForOfStmt, ForStmt, Function, Ident, Lit, MemberProp, Module,
@@ -10,6 +11,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::BindingId;
+use super::expr_utils::is_unresolved_undefined;
 use crate::utils::paren::strip_parens;
 
 use super::eval_utils::{js_source_mentions_binding, DirectEvalAnalyzer};
@@ -17,21 +19,19 @@ use super::RewriteLevel;
 
 pub struct VarDeclToLetConst {
     level: RewriteLevel,
+    unresolved_mark: Mark,
 }
 
 impl VarDeclToLetConst {
-    pub fn new() -> Self {
-        Self::new_with_level(RewriteLevel::Standard)
+    pub fn new(unresolved_mark: Mark) -> Self {
+        Self::new_with_level(unresolved_mark, RewriteLevel::Standard)
     }
 
-    pub fn new_with_level(level: RewriteLevel) -> Self {
-        Self { level }
-    }
-}
-
-impl Default for VarDeclToLetConst {
-    fn default() -> Self {
-        Self::new()
+    pub fn new_with_level(unresolved_mark: Mark, level: RewriteLevel) -> Self {
+        Self {
+            level,
+            unresolved_mark,
+        }
     }
 }
 
@@ -66,6 +66,7 @@ impl VisitMut for VarDeclToLetConst {
         ));
         must_stay_var.extend(collect_use_before_decl_vars_module(&module.body, &var_ids));
         must_stay_var.extend(collect_loop_captured_vars_module(&module.body));
+        must_stay_var.extend(collect_loop_body_carried_vars(&module.body, &assigned));
         keep_eval_affected_vars(&module.body, &var_ids, &mut must_stay_var, true);
         keep_global_observed_vars(&module.body, &var_ids, &mut must_stay_var);
         if self.level == RewriteLevel::Minimal {
@@ -78,6 +79,8 @@ impl VisitMut for VarDeclToLetConst {
             must_stay_var: &must_stay_var,
             in_block_context: true,
             in_with_stmt: false,
+            loop_body_depth: 0,
+            unresolved_mark: self.unresolved_mark,
         };
         module.visit_mut_with(&mut converter);
     }
@@ -118,6 +121,7 @@ impl VisitMut for VarDeclToLetConst {
         ));
         must_stay_var.extend(collect_use_before_decl_vars_stmts(&body.stmts, &var_ids));
         must_stay_var.extend(collect_loop_captured_vars_stmts(&body.stmts));
+        must_stay_var.extend(collect_loop_body_carried_vars(&body.stmts, &assigned));
         keep_eval_affected_vars(&body.stmts, &var_ids, &mut must_stay_var, false);
 
         let mut converter = VarConverter {
@@ -125,6 +129,8 @@ impl VisitMut for VarDeclToLetConst {
             must_stay_var: &must_stay_var,
             in_block_context: true,
             in_with_stmt: false,
+            loop_body_depth: 0,
+            unresolved_mark: self.unresolved_mark,
         };
         body.visit_mut_with(&mut converter);
     }
@@ -1199,6 +1205,137 @@ impl Visit for LoopCapturedVarCollector {
     }
 }
 
+/// A `var` declared without an initializer in a loop body keeps the value an
+/// earlier iteration gave it, while a `let` there starts every iteration as
+/// `undefined`. When anything assigns such a var, converting it can change
+/// what a read sees, so it stays `var` — unless the first later statement of
+/// its block that mentions it starts by writing it, so no read can see the
+/// carried value. (Reads outside the declaring block already keep it `var`.)
+fn collect_loop_body_carried_vars<N>(
+    nodes: &[N],
+    assigned: &HashSet<BindingId>,
+) -> HashSet<BindingId>
+where
+    N: VisitWith<LoopBodyUninitVarCollector>,
+{
+    let mut collector = LoopBodyUninitVarCollector::default();
+    for node in nodes {
+        node.visit_with(&mut collector);
+    }
+    collector.ids.retain(|id| assigned.contains(id));
+    collector.ids
+}
+
+#[derive(Default)]
+struct LoopBodyUninitVarCollector {
+    loop_body_depth: usize,
+    ids: HashSet<BindingId>,
+}
+
+impl LoopBodyUninitVarCollector {
+    fn visit_loop_body(&mut self, body: &Stmt) {
+        self.loop_body_depth += 1;
+        body.visit_with(self);
+        self.loop_body_depth -= 1;
+    }
+}
+
+impl Visit for LoopBodyUninitVarCollector {
+    fn visit_stmts(&mut self, stmts: &[Stmt]) {
+        for (index, stmt) in stmts.iter().enumerate() {
+            let Stmt::Decl(Decl::Var(var)) = stmt else {
+                stmt.visit_with(self);
+                continue;
+            };
+            if self.loop_body_depth == 0 || var.kind != VarDeclKind::Var {
+                stmt.visit_with(self);
+                continue;
+            }
+            for decl in &var.decls {
+                if decl.init.is_some() {
+                    decl.visit_with(self);
+                    continue;
+                }
+                let mut ids = HashSet::default();
+                collect_binding_ids_from_pat(&decl.name, &mut ids);
+                for id in ids {
+                    if !first_mention_writes(&stmts[index + 1..], &id) {
+                        self.ids.insert(id);
+                    }
+                }
+            }
+        }
+    }
+
+    fn visit_var_decl(&mut self, var: &VarDecl) {
+        if self.loop_body_depth == 0 || var.kind != VarDeclKind::Var {
+            return;
+        }
+        for decl in var.decls.iter().filter(|d| d.init.is_none()) {
+            collect_binding_ids_from_pat(&decl.name, &mut self.ids);
+        }
+    }
+
+    fn visit_for_stmt(&mut self, stmt: &ForStmt) {
+        stmt.init.visit_with(self);
+        self.visit_loop_body(&stmt.body);
+    }
+
+    // The head of `for (var x in/of ...)` is assigned on every iteration.
+    fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
+        self.visit_loop_body(&stmt.body);
+    }
+
+    fn visit_for_of_stmt(&mut self, stmt: &ForOfStmt) {
+        self.visit_loop_body(&stmt.body);
+    }
+
+    fn visit_while_stmt(&mut self, stmt: &swc_core::ecma::ast::WhileStmt) {
+        self.visit_loop_body(&stmt.body);
+    }
+
+    fn visit_do_while_stmt(&mut self, stmt: &swc_core::ecma::ast::DoWhileStmt) {
+        self.visit_loop_body(&stmt.body);
+    }
+
+    // Nested functions are their own var scopes.
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+    fn visit_class(&mut self, _: &Class) {}
+}
+
+/// Whether the first statement in `stmts` that mentions `id` begins with a
+/// plain `id = value` (as the statement itself or as an `if` test) whose
+/// value does not mention `id`.
+fn first_mention_writes(stmts: &[Stmt], id: &BindingId) -> bool {
+    let mentions = |node: &dyn Fn(&mut AllIdentRefCollector)| {
+        let mut refs = AllIdentRefCollector::default();
+        node(&mut refs);
+        refs.refs.contains(id)
+    };
+    let Some(stmt) = stmts
+        .iter()
+        .find(|stmt| mentions(&|refs| stmt.visit_with(refs)))
+    else {
+        return false;
+    };
+    let expr = match stmt {
+        Stmt::Expr(expr_stmt) => &*expr_stmt.expr,
+        Stmt::If(if_stmt) => &*if_stmt.test,
+        _ => return false,
+    };
+    let Expr::Assign(assign) = strip_parens(expr) else {
+        return false;
+    };
+    assign.op == swc_core::ecma::ast::AssignOp::Assign
+        && matches!(
+            &assign.left,
+            AssignTarget::Simple(SimpleAssignTarget::Ident(target))
+                if (target.id.sym.clone(), target.id.ctxt) == *id
+        )
+        && !mentions(&|refs| assign.right.visit_with(refs))
+}
+
 #[derive(Default)]
 struct AllIdentRefCollector {
     refs: HashSet<BindingId>,
@@ -1483,6 +1620,17 @@ struct VarConverter<'a> {
     /// true when visiting a `with` body. A `var` there may resolve through the
     /// object environment record, while `let`/`const` would always be lexical.
     in_with_stmt: bool,
+    /// Number of loop bodies between the current node and its var scope.
+    loop_body_depth: usize,
+    unresolved_mark: Mark,
+}
+
+impl VarConverter<'_> {
+    fn visit_mut_loop_body(&mut self, body: &mut Stmt) {
+        self.loop_body_depth += 1;
+        body.visit_mut_with(self);
+        self.loop_body_depth -= 1;
+    }
 }
 
 impl VisitMut for VarConverter<'_> {
@@ -1495,7 +1643,8 @@ impl VisitMut for VarConverter<'_> {
                 ids.iter().any(|id| self.must_stay_var.contains(id))
             });
             if !any_must_stay {
-                convert_single_var_decl(var, self.assigned);
+                let loop_body_mark = (self.loop_body_depth > 0).then_some(self.unresolved_mark);
+                convert_single_var_decl(var, self.assigned, loop_body_mark);
             }
         }
         // Don't recurse — VarDecl children are patterns/inits, not nested stmts
@@ -1530,14 +1679,14 @@ impl VisitMut for VarConverter<'_> {
         stmt.test.visit_mut_with(self);
         let old = self.in_block_context;
         self.in_block_context = matches!(*stmt.body, swc_core::ecma::ast::Stmt::Block(_));
-        stmt.body.visit_mut_with(self);
+        self.visit_mut_loop_body(&mut stmt.body);
         self.in_block_context = old;
     }
 
     fn visit_mut_do_while_stmt(&mut self, stmt: &mut swc_core::ecma::ast::DoWhileStmt) {
         let old = self.in_block_context;
         self.in_block_context = matches!(*stmt.body, swc_core::ecma::ast::Stmt::Block(_));
-        stmt.body.visit_mut_with(self);
+        self.visit_mut_loop_body(&mut stmt.body);
         self.in_block_context = old;
         stmt.test.visit_mut_with(self);
     }
@@ -1557,7 +1706,7 @@ impl VisitMut for VarConverter<'_> {
         }
         // body: only block statement provides valid let/const context
         self.in_block_context = matches!(*stmt.body, swc_core::ecma::ast::Stmt::Block(_));
-        stmt.body.visit_mut_with(self);
+        self.visit_mut_loop_body(&mut stmt.body);
         self.in_block_context = old;
     }
 
@@ -1580,7 +1729,7 @@ impl VisitMut for VarConverter<'_> {
         }
         stmt.right.visit_mut_with(self);
         self.in_block_context = matches!(*stmt.body, swc_core::ecma::ast::Stmt::Block(_));
-        stmt.body.visit_mut_with(self);
+        self.visit_mut_loop_body(&mut stmt.body);
         self.in_block_context = old;
     }
 
@@ -1600,7 +1749,7 @@ impl VisitMut for VarConverter<'_> {
         }
         stmt.right.visit_mut_with(self);
         self.in_block_context = matches!(*stmt.body, swc_core::ecma::ast::Stmt::Block(_));
-        stmt.body.visit_mut_with(self);
+        self.visit_mut_loop_body(&mut stmt.body);
         self.in_block_context = old;
     }
 
@@ -1669,12 +1818,31 @@ fn convert_for_iter_var_decl(var: &mut VarDecl, assigned: &HashSet<BindingId>) {
     };
 }
 
-fn convert_single_var_decl(var: &mut VarDecl, assigned: &HashSet<BindingId>) {
+/// `loop_body_mark` is the unresolved mark when `var` sits in a loop body.
+fn convert_single_var_decl(
+    var: &mut VarDecl,
+    assigned: &HashSet<BindingId>,
+    loop_body_mark: Option<Mark>,
+) {
     if var.kind != VarDeclKind::Var {
         return;
     }
     if var.decls.iter().any(|d| pat_requires_var_keyword(&d.name)) {
         return;
+    }
+    if let Some(unresolved_mark) = loop_body_mark {
+        // `UnUndefinedInit` keeps `= undefined` on a loop-body `var`, where it
+        // resets the binding every iteration. A `let` resets it on its own.
+        for decl in &mut var.decls {
+            if matches!(decl.name, Pat::Ident(_))
+                && decl
+                    .init
+                    .as_deref()
+                    .is_some_and(|init| is_unresolved_undefined(init, unresolved_mark))
+            {
+                decl.init = None;
+            }
+        }
     }
 
     // Check all declarators in this VarDecl

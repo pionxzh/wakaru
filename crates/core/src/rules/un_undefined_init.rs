@@ -1,7 +1,10 @@
 use crate::collections::{HashMap, HashSet};
 use swc_core::common::Mark;
 
-use swc_core::ecma::ast::{Expr, Module, Pat, VarDecl, VarDeclKind};
+use swc_core::ecma::ast::{
+    ArrowExpr, Class, DoWhileStmt, Expr, ForInStmt, ForOfStmt, ForStmt, Function, Module, Pat,
+    Stmt, VarDecl, VarDeclKind, WhileStmt,
+};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::binding_facts::collect_binding_facts;
@@ -22,6 +25,8 @@ pub struct UnUndefinedInit {
     dynamic_scope: bool,
     /// The module can rebind `undefined` at runtime.
     undefined_blocked: bool,
+    /// Number of loop bodies between the current node and its var scope.
+    loop_body_depth: usize,
 }
 
 impl UnUndefinedInit {
@@ -32,7 +37,20 @@ impl UnUndefinedInit {
             converted_unused_bindings: HashSet::default(),
             dynamic_scope: false,
             undefined_blocked: false,
+            loop_body_depth: 0,
         }
+    }
+
+    fn visit_mut_loop_body(&mut self, body: &mut Stmt) {
+        self.loop_body_depth += 1;
+        body.visit_mut_with(self);
+        self.loop_body_depth -= 1;
+    }
+
+    fn visit_mut_var_scope<N: VisitMutWith<Self>>(&mut self, node: &mut N) {
+        let depth = std::mem::take(&mut self.loop_body_depth);
+        node.visit_mut_children_with(self);
+        self.loop_body_depth = depth;
     }
 }
 
@@ -62,6 +80,12 @@ impl VisitMut for UnUndefinedInit {
         if decl.kind == VarDeclKind::Var && self.dynamic_scope {
             return;
         }
+        // In a loop body, `var x = void 0` resets `x` on every iteration and a
+        // bare `var x` does not. `VarDeclToLetConst` drops the initializer
+        // when it turns the declaration into a `let`.
+        if decl.kind == VarDeclKind::Var && self.loop_body_depth > 0 {
+            return;
+        }
 
         for declarator in &mut decl.decls {
             let Pat::Ident(binding) = &declarator.name else {
@@ -79,5 +103,46 @@ impl VisitMut for UnUndefinedInit {
                 }
             }
         }
+    }
+
+    fn visit_mut_for_stmt(&mut self, stmt: &mut ForStmt) {
+        stmt.init.visit_mut_with(self);
+        stmt.test.visit_mut_with(self);
+        stmt.update.visit_mut_with(self);
+        self.visit_mut_loop_body(&mut stmt.body);
+    }
+
+    fn visit_mut_for_in_stmt(&mut self, stmt: &mut ForInStmt) {
+        stmt.left.visit_mut_with(self);
+        stmt.right.visit_mut_with(self);
+        self.visit_mut_loop_body(&mut stmt.body);
+    }
+
+    fn visit_mut_for_of_stmt(&mut self, stmt: &mut ForOfStmt) {
+        stmt.left.visit_mut_with(self);
+        stmt.right.visit_mut_with(self);
+        self.visit_mut_loop_body(&mut stmt.body);
+    }
+
+    fn visit_mut_while_stmt(&mut self, stmt: &mut WhileStmt) {
+        stmt.test.visit_mut_with(self);
+        self.visit_mut_loop_body(&mut stmt.body);
+    }
+
+    fn visit_mut_do_while_stmt(&mut self, stmt: &mut DoWhileStmt) {
+        self.visit_mut_loop_body(&mut stmt.body);
+        stmt.test.visit_mut_with(self);
+    }
+
+    fn visit_mut_function(&mut self, func: &mut Function) {
+        self.visit_mut_var_scope(func);
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        self.visit_mut_var_scope(arrow);
+    }
+
+    fn visit_mut_class(&mut self, class: &mut Class) {
+        self.visit_mut_var_scope(class);
     }
 }

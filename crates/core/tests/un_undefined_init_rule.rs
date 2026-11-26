@@ -133,3 +133,43 @@ with (o) {
 "#;
     assert_eq_normalized(&apply(input), input);
 }
+
+#[test]
+fn loop_body_var_keeps_undefined_init() {
+    // `var x = void 0` resets `x` on every iteration; a bare `var x` does not.
+    let input = r#"
+for (var i = 0; i < 2; i++) {
+  var x = void 0;
+  use(x);
+  x = i;
+}
+while (a) {
+  if (b) {
+    var y = undefined;
+    use(y);
+  }
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn var_in_function_inside_loop_drops_undefined_init() {
+    let input = r#"
+for (;;) {
+  (function () {
+    var x = void 0;
+    use(x);
+  })();
+}
+"#;
+    let expected = r#"
+for (;;) {
+  (function () {
+    var x;
+    use(x);
+  })();
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

@@ -4,11 +4,11 @@ use common::{assert_eq_normalized, render_pipeline, render_rule, render_with_lev
 use wakaru_core::{rules::VarDeclToLetConst, RewriteLevel};
 
 fn apply_rule(input: &str) -> String {
-    render_rule(input, |_| VarDeclToLetConst::new())
+    render_rule(input, VarDeclToLetConst::new)
 }
 
 fn apply_rule_with_level(input: &str, level: RewriteLevel) -> String {
-    render_rule(input, |_| VarDeclToLetConst::new_with_level(level))
+    render_rule(input, |mark| VarDeclToLetConst::new_with_level(mark, level))
 }
 
 #[test]
@@ -2382,4 +2382,148 @@ function f(a) {
 "#;
     let output = apply_rule(input);
     assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn loop_body_var_without_init_read_before_write_stays_var() {
+    // The var keeps the previous iteration's value; a `let` would reset it.
+    let input = r#"
+for (var i = 0; i < 2; i++) {
+  var x;
+  console.log(x);
+  x = i;
+}
+"#;
+    let expected = r#"
+for (let i = 0; i < 2; i++) {
+  var x;
+  console.log(x);
+  x = i;
+}
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn loop_body_var_without_init_in_nested_block_stays_var() {
+    let input = r#"
+while (next()) {
+  if (ready()) {
+    var last;
+    if (ok()) last = 1;
+    use(last);
+  }
+}
+"#;
+    assert_eq_normalized(&apply_rule(input), input);
+}
+
+#[test]
+fn loop_body_var_without_init_never_assigned_becomes_let() {
+    let input = r#"
+for (var i = 0; i < 2; i++) {
+  var x;
+  console.log(x);
+}
+"#;
+    let expected = r#"
+for (let i = 0; i < 2; i++) {
+  let x;
+  console.log(x);
+}
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn loop_body_var_with_undefined_init_becomes_bare_let() {
+    // `= void 0` resets the var every iteration, which a bare `let` also does.
+    let input = r#"
+for (var i = 0; i < 2; i++) {
+  var x = void 0;
+  console.log(x);
+  x = i;
+}
+"#;
+    let expected = r#"
+for (let i = 0; i < 2; i++) {
+  let x;
+  console.log(x);
+  x = i;
+}
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn loop_body_var_reset_semantics_survive_pipeline() {
+    let input = r#"
+for (var i = 0; i < 2; i++) {
+  var a;
+  var b = void 0;
+  console.log(a, b);
+  a = i;
+  b = i;
+}
+console.log(b);
+"#;
+    let expected = r#"
+for (let i = 0; i < 2; i++) {
+  var a;
+  var b = undefined;
+  console.log(a, b);
+  a = i;
+  b = i;
+}
+console.log(b);
+"#;
+    assert_eq_normalized(&render_pipeline(input), expected);
+}
+
+#[test]
+fn loop_body_var_written_before_any_read_becomes_let() {
+    let input = r#"
+for (var i = 0; i < 2; i++) {
+  var x;
+  console.log(i);
+  x = i;
+  console.log(x);
+  var y;
+  if (y = next()) use(y);
+}
+"#;
+    let expected = r#"
+for (let i = 0; i < 2; i++) {
+  let x;
+  console.log(i);
+  x = i;
+  console.log(x);
+  let y;
+  if (y = next()) use(y);
+}
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn loop_body_var_first_write_reads_itself_stays_var() {
+    let input = r#"
+for (var i = 0; i < 2; i++) {
+  var x;
+  x = (x || 0) + 1;
+  var y;
+  if (ok()) y = 1;
+  use(y);
+}
+"#;
+    let expected = r#"
+for (let i = 0; i < 2; i++) {
+  var x;
+  x = (x || 0) + 1;
+  var y;
+  if (ok()) y = 1;
+  use(y);
+}
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
 }
