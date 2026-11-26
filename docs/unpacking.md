@@ -1541,8 +1541,10 @@ self.webpackChunk_app || []).push(…)`, `(self.webpackChunk_app ||=
 []).push(…)`, the `Array.isArray` form, Turbopack's `globalThis.TURBOPACK…`)
 or, for a runtime, the one it binds to a local (`var n = self.webpackChunk_app
 = self.webpackChunk_app || []`, `||= []`, or `const n =
-Array.isArray(self.webpackChunk_app) ? … : (self.webpackChunk_app = [])`). An
-input that names a global matches only
+Array.isArray(self.webpackChunk_app) ? … : (self.webpackChunk_app = [])`).
+The global object may also be a choice between globals
+(`("u" > typeof self ? self : global).rspackChunk ||= []`, wild-observed
+from an Rspack build). An input that names a global matches only
 inputs sharing a name; inputs that name none (CommonJS and ESM chunks and their
 runtime, server chunks, a self-contained bundle) match only each other. A
 reference is rewritten when exactly one candidate of its build carries the ID,

@@ -106,8 +106,7 @@ fn initialized_global(expr: &Expr) -> Option<String> {
         return None;
     };
     if assign.op == AssignOp::OrAssign {
-        let global_object = matches!(strip_parens(&target.obj), Expr::Ident(_) | Expr::This(_));
-        if !global_object || !is_empty_array(&assign.right) {
+        if !is_global_object(&target.obj) || !is_empty_array(&assign.right) {
             return None;
         }
         return static_prop_name(&target.prop);
@@ -213,9 +212,26 @@ fn same_global(left: &MemberExpr, right: &MemberExpr) -> Option<String> {
     let same_object = match (strip_parens(&left.obj), strip_parens(&right.obj)) {
         (Expr::Ident(left), Expr::Ident(right)) => left.to_id() == right.to_id(),
         (Expr::This(_), Expr::This(_)) => true,
+        (left @ Expr::Cond(_), right) => is_global_object(left) && left.eq_ignore_span(right),
         _ => false,
     };
     same_object.then_some(name)
+}
+
+/// The object a chunk-loading global hangs off: an identifier (`self`,
+/// `window`, `globalThis`, a parameter), `this`, or a choice between them,
+/// written when the target has more than one possible global object
+/// (`("u" > typeof self ? self : global).rspackChunk ||= []`, wild-observed
+/// from an Rspack build).
+fn is_global_object(expr: &Expr) -> bool {
+    match strip_parens(expr) {
+        Expr::Ident(_) | Expr::This(_) => true,
+        Expr::Cond(cond) => {
+            matches!(strip_parens(&cond.cons), Expr::Ident(_) | Expr::This(_))
+                && matches!(strip_parens(&cond.alt), Expr::Ident(_) | Expr::This(_))
+        }
+        _ => false,
+    }
 }
 
 fn static_prop_name(prop: &MemberProp) -> Option<String> {
@@ -290,6 +306,30 @@ mod tests {
         );
         assert!(globals("(self.x ||= [1]).push(2);").is_empty());
         assert!(globals("(window.a.b ||= []).push([[1], {}]);").is_empty());
+    }
+
+    #[test]
+    fn a_choice_of_global_objects_names_the_global() {
+        assert_eq!(
+            globals(r#"(("u">typeof self?self:global).rspackChunk_app||=[]).push([[1],{}]);"#),
+            ["rspackChunk_app"]
+        );
+        assert_eq!(
+            globals(r#"(()=>{var s=("u">typeof self?self:global).rspackChunk_app||=[];})();"#),
+            ["rspackChunk_app"]
+        );
+        assert_eq!(
+            globals(
+                r#"(()=>{var s=(c?self:global).webpackChunk_app=(c?self:global).webpackChunk_app||[];})();"#
+            ),
+            ["webpackChunk_app"]
+        );
+        // Not a choice between global objects, or two different choices.
+        assert!(globals("((c ? a.b : self).x ||= []).push([[1], {}]);").is_empty());
+        assert!(globals(
+            "(()=>{var s=(c?self:global).webpackChunk_app=(d?self:global).webpackChunk_app||[];})();"
+        )
+        .is_empty());
     }
 
     #[test]

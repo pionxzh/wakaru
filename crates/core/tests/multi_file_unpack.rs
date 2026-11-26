@@ -6003,6 +6003,37 @@ fn webpack5_runtime_id_from_a_runtime_inside_a_loader_wrapper_folds() {
 }
 
 #[test]
+fn webpack5_runtime_id_with_a_choice_of_global_objects_folds() {
+    // The runtime and its chunks pick the global object at run time. The
+    // runtime also holds an unrelated `i.values = i.values || []`.
+    let global_object = r#"("u">typeof self?self:global)"#;
+    let runtime = runtime_only_chunk("23", "webpackChunk_demo")
+        .replace(
+            "t=self.webpackChunk_demo=self.webpackChunk_demo||[];",
+            &format!("t={global_object}.rspackChunk_demo||=[];"),
+        )
+        .replace(
+            "o.m=r,",
+            "o.m=r,o.v=function(i){var n=i.values=i.values||[];return n},",
+        );
+    assert!(runtime.contains("rspackChunk_demo||=[]") && runtime.contains("i.values"));
+    let chunk = jsonp_shared_chunk("webpackChunk_demo", SHARED_23).replace(
+        "(self.webpackChunk_demo=self.webpackChunk_demo||[])",
+        &format!("({global_object}.rspackChunk_demo||=[])"),
+    );
+    assert!(chunk.contains("rspackChunk_demo||=[]"));
+    let output = unpack_sources(&[("runtime.js", runtime), ("shared.js", chunk)]);
+    let shared = output_module(&output, "module-805.js");
+    assert!(shared.contains("export class A"), "{shared}");
+    assert!(!shared.contains("require.j"), "{shared}");
+    assert!(
+        runtime_id_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
+}
+
+#[test]
 fn webpack5_runtime_id_from_another_builds_runtime_only_chunk_does_not_count() {
     let output = unpack_sources(&[
         ("runtime.js", runtime_only_chunk("23", "webpackChunk_other")),
