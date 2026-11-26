@@ -5960,6 +5960,30 @@ fn webpack5_runtime_id_from_a_runtime_only_chunk_folds() {
 }
 
 #[test]
+fn webpack5_runtime_id_from_a_runtime_inside_a_loader_wrapper_folds() {
+    // A loader script guards the runtime IIFE inside its own wrapper.
+    let runtime = format!(
+        "(function(){{if(!window.demoLoaded){{{}window.demoLoaded=1}}}})();",
+        runtime_only_chunk("23", "webpackChunk_demo")
+    );
+    let output = unpack_sources(&[
+        ("loader.js", runtime),
+        (
+            "shared.js",
+            jsonp_shared_chunk("webpackChunk_demo", SHARED_23),
+        ),
+    ]);
+    let shared = output_module(&output, "module-805.js");
+    assert!(shared.contains("export class A"), "{shared}");
+    assert!(!shared.contains("require.j"), "{shared}");
+    assert!(
+        runtime_id_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
+}
+
+#[test]
 fn webpack5_runtime_id_from_another_builds_runtime_only_chunk_does_not_count() {
     let output = unpack_sources(&[
         ("runtime.js", runtime_only_chunk("23", "webpackChunk_other")),

@@ -73,7 +73,9 @@ impl std::fmt::Display for WebpackRuntimeId {
 
 /// The runtime ids an input's webpack 5 bootstraps assign.
 ///
-/// A bootstrap is the input's top level or the body of a top-level IIFE. Its
+/// A bootstrap is the input's top level or the body of an IIFE statement in
+/// it, also one nested in another IIFE's body or in a block or `if` branch
+/// there (see [`collect_bootstraps`]). Its
 /// `__webpack_require__` is a function declared directly in that body that
 /// also gets the module table assigned (`R.m = modules`, which webpack emits
 /// whenever the runtime loads chunks, the only case with a `.j`). Assignments
@@ -93,16 +95,48 @@ pub(crate) fn webpack_runtime_ids(module: &Module) -> Vec<WebpackRuntimeId> {
             ModuleItem::ModuleDecl(_) => None,
         })
         .collect::<Vec<_>>();
-    collect_bootstrap_runtime_ids(&top_level, &mut ids);
-    for stmt in &top_level {
-        let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
-            continue;
-        };
-        if let Some(body) = super::webpack5::extract_iife_body(expr) {
-            collect_bootstrap_runtime_ids(&body.stmts.iter().collect::<Vec<_>>(), &mut ids);
-        }
-    }
+    collect_bootstraps(&top_level, MAX_BOOTSTRAP_NESTING, &mut ids);
     ids
+}
+
+/// How many IIFEs deep a bootstrap may sit. A loader script can guard the
+/// runtime IIFE inside its own wrapper
+/// (`(function(){ if (!window.x) { (()=>{ /* runtime */ })() } })()`).
+const MAX_BOOTSTRAP_NESTING: usize = 3;
+
+/// Treat `stmts` as a bootstrap, then look for further bootstraps in the
+/// IIFE statements among them, also inside a plain block or an `if` branch.
+/// Never inside any other function: a runtime there is not run on load.
+fn collect_bootstraps(stmts: &[&Stmt], nesting: usize, ids: &mut Vec<WebpackRuntimeId>) {
+    collect_bootstrap_runtime_ids(stmts, ids);
+    if nesting == 0 {
+        return;
+    }
+    for stmt in stmts {
+        collect_nested_bootstraps(stmt, nesting, ids);
+    }
+}
+
+fn collect_nested_bootstraps(stmt: &Stmt, nesting: usize, ids: &mut Vec<WebpackRuntimeId>) {
+    match stmt {
+        Stmt::Expr(ExprStmt { expr, .. }) => {
+            if let Some(body) = super::webpack5::extract_iife_body(expr) {
+                collect_bootstraps(&body.stmts.iter().collect::<Vec<_>>(), nesting - 1, ids);
+            }
+        }
+        Stmt::Block(block) => {
+            for stmt in &block.stmts {
+                collect_nested_bootstraps(stmt, nesting, ids);
+            }
+        }
+        Stmt::If(if_stmt) => {
+            collect_nested_bootstraps(&if_stmt.cons, nesting, ids);
+            if let Some(alt) = &if_stmt.alt {
+                collect_nested_bootstraps(alt, nesting, ids);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The runtime of an input that no detector splits: a webpack 5 runtime-only
@@ -843,6 +877,20 @@ mod tests {
         assert_eq!(
             ids("(()=>{var o={};function u(e){}u.m=o;if(u.j=7){}u.j=8})()"),
             vec![WebpackRuntimeId::Number(7.0), WebpackRuntimeId::Number(8.0)]
+        );
+    }
+
+    #[test]
+    fn runtime_ids_are_read_from_a_bootstrap_inside_a_loader_wrapper() {
+        assert_eq!(
+            ids("(function(){if(!window.x){(()=>{var o={};function u(e){}u.m=o,u.j=\"7\"})()}})()"),
+            vec![WebpackRuntimeId::String("7".into())]
+        );
+        // A runtime in a function that is not called on load does not count.
+        assert!(ids("function f(){(()=>{var o={};function u(e){}u.m=o,u.j=7})()}").is_empty());
+        assert!(
+            ids("(()=>{setTimeout(()=>{(()=>{var o={};function u(e){}u.m=o,u.j=7})()})})()")
+                .is_empty()
         );
     }
 
