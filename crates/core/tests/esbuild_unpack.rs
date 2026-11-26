@@ -129,6 +129,54 @@ fn esbuild_detects_minified_cjs_helper() {
     );
 }
 
+// rolldown's `__esmMin` takes a third parameter that keeps a thrown error.
+const ESM_MIN_HELPER: &str = "(fn, res, err) => () => { if (err) throw err[0]; try { return fn && (res = fn(fn = 0)), res; } catch (e) { throw err = [e], e; } }";
+const ESM_MIN_HELPER_MINIFIED: &str =
+    "(e,t,n)=>()=>{if(n)throw n[0];try{return e&&(t=e(e=0)),t}catch(e){throw n=[e],e}}";
+
+#[test]
+fn rolldown_esm_min_helper_is_a_lazy_helper() {
+    for helper in [ESM_MIN_HELPER, ESM_MIN_HELPER_MINIFIED] {
+        let bundle = make_bundle(helper, "__esmMin");
+        let pairs = expect_unpack(&bundle, "bundle.js");
+        let names = module_names(&pairs);
+        for module in ["mod_a.js", "mod_e.js", "entry.js"] {
+            assert!(names.contains(&module), "{module} missing: {names:?}");
+        }
+    }
+}
+
+#[test]
+fn three_parameter_helper_with_another_body_is_not_a_lazy_helper() {
+    // Each differs from `__esmMin` in one place.
+    let near_misses = [
+        // no rethrow guard
+        "(fn, res, err) => () => { if (err) return; try { return fn && (res = fn(fn = 0)), res; } catch (e) { throw err = [e], e; } }",
+        // runs `fn` on every call
+        "(fn, res, err) => () => { if (err) throw err[0]; try { return (res = fn(fn = 0)), res; } catch (e) { throw err = [e], e; } }",
+        // the catch keeps a different value
+        "(fn, res, err) => () => { if (err) throw err[0]; try { return fn && (res = fn(fn = 0)), res; } catch (e) { throw err = [res], e; } }",
+        // a parameter in the wrong role
+        "(fn, res, err) => () => { if (err) throw err[0]; try { return fn && (err = fn(fn = 0)), res; } catch (e) { throw err = [e], e; } }",
+    ];
+    for helper in near_misses {
+        let bundle = make_bundle(helper, "__esmMin");
+        let output = wakaru_core::driver::test_support::unpack(
+            &bundle,
+            DecompileOptions {
+                filename: "bundle.js".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("unpack should succeed");
+        assert!(
+            !output.modules.iter().any(|(name, _)| name == "mod_a.js"),
+            "split on a helper that is not `__esmMin`:\n{helper}\n{:?}",
+            output.modules.iter().map(|(n, _)| n).collect::<Vec<_>>()
+        );
+    }
+}
+
 #[test]
 fn factory_passed_in_parentheses_unpacks_like_a_bare_factory() {
     // rolldown emits esbuild's lazy-factory helper but passes each factory in

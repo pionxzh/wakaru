@@ -3,9 +3,10 @@
 use swc_core::atoms::Atom;
 use swc_core::common::{Span, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, ArrowFunctionBody, CallExpr, Callee, Decl, ExportSpecifier, Expr, ExprStmt,
-    Function, Module, ModuleDecl, ModuleExportName, ModuleItem, Pat, Prop, PropName, PropOrSpread,
-    Stmt, Str, VarDeclarator,
+    ArrowExpr, ArrowFunctionBody, AssignOp, AssignTarget, BinaryOp, CallExpr, Callee, Decl,
+    ExportSpecifier, Expr, ExprOrSpread, ExprStmt, Function, Lit, MemberProp, Module, ModuleDecl,
+    ModuleExportName, ModuleItem, Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt, Str,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -162,18 +163,146 @@ pub(super) fn collect_commonjs_helper_syms(module: &Module) -> HashSet<Atom> {
 
 /// Returns `true` if `expr` matches the esbuild lazy-helper shape:
 ///   Arrow(≤2 params) → body is Arrow or named Fn expression
+/// or rolldown's `__esmMin` (see [`is_rolldown_esm_min_helper`]).
 fn is_lazy_helper(expr: &Expr) -> bool {
     let Expr::Arrow(outer) = expr else {
         return false;
     };
     if outer.params.len() > 2 {
-        return false;
+        return is_rolldown_esm_min_helper(outer);
     }
     let body_expr = match &*outer.body {
         ArrowFunctionBody::Expr(e) => e,
         ArrowFunctionBody::FunctionBody(_) => return false,
     };
     matches!(**body_expr, Expr::Arrow(_) | Expr::Fn(_))
+}
+
+/// rolldown's lazy ESM initializer helper. It runs `fn` once like esbuild's
+/// `__esm`, and also keeps an error `fn` threw and throws it again on every
+/// later call:
+///
+/// ```js
+/// var __esmMin = (fn, res, err) => () => {
+///   if (err) throw err[0];
+///   try { return fn && (res = fn(fn = 0)), res; }
+///   catch (e) { throw err = [e], e; }
+/// };
+/// ```
+///
+/// producer rolldown@1.3.3, minified or not. Its third parameter fails the
+/// parameter count of [`is_lazy_helper`], so the whole body is matched here
+/// instead, each name bound to the helper's own parameters.
+fn is_rolldown_esm_min_helper(outer: &ArrowExpr) -> bool {
+    let [Pat::Ident(fn_param), Pat::Ident(res_param), Pat::Ident(err_param)] =
+        outer.params.as_slice()
+    else {
+        return false;
+    };
+    let (run, res, err) = (&fn_param.id.sym, &res_param.id.sym, &err_param.id.sym);
+    if run == res || run == err || res == err {
+        return false;
+    }
+    let ArrowFunctionBody::Expr(inner) = &*outer.body else {
+        return false;
+    };
+    let Expr::Arrow(inner) = strip_parens(inner) else {
+        return false;
+    };
+    if !inner.params.is_empty() || inner.is_async || inner.is_generator {
+        return false;
+    }
+    let ArrowFunctionBody::FunctionBody(body) = &*inner.body else {
+        return false;
+    };
+    let [Stmt::If(guard), Stmt::Try(try_stmt)] = body.stmts.as_slice() else {
+        return false;
+    };
+
+    // if (err) throw err[0];
+    let rethrow = match &*guard.cons {
+        Stmt::Block(block) => match block.stmts.as_slice() {
+            [only] => only,
+            _ => return false,
+        },
+        other => other,
+    };
+    let rethrows_first = matches!(rethrow, Stmt::Throw(throw)
+        if matches!(strip_parens(&throw.arg), Expr::Member(first)
+            if is_ident(&first.obj, err)
+                && matches!(&first.prop, MemberProp::Computed(index)
+                    if is_zero(&index.expr))));
+    if guard.alt.is_some() || !is_ident(&guard.test, err) || !rethrows_first {
+        return false;
+    }
+
+    // try { return fn && (res = fn(fn = 0)), res; }
+    if try_stmt.finalizer.is_some() {
+        return false;
+    }
+    let [Stmt::Return(ret)] = try_stmt.block.stmts.as_slice() else {
+        return false;
+    };
+    let Some(Expr::Seq(seq)) = ret.arg.as_deref().map(strip_parens) else {
+        return false;
+    };
+    let [guarded, result] = seq.exprs.as_slice() else {
+        return false;
+    };
+    let Expr::Bin(and) = strip_parens(guarded) else {
+        return false;
+    };
+    let runs_once = and.op == BinaryOp::LogicalAnd
+        && is_ident(&and.left, run)
+        && matches!(assigned_value(&and.right, res), Some(Expr::Call(call))
+            if matches!(&call.callee, Callee::Expr(callee) if is_ident(callee, run))
+                && matches!(call.args.as_slice(), [ExprOrSpread { spread: None, expr }]
+                    if assigned_value(expr, run).is_some_and(is_zero)));
+    if !runs_once || !is_ident(result, res) {
+        return false;
+    }
+
+    // catch (e) { throw err = [e], e; }
+    let Some(handler) = &try_stmt.handler else {
+        return false;
+    };
+    let Some(Pat::Ident(caught)) = &handler.param else {
+        return false;
+    };
+    let caught = &caught.id.sym;
+    let [Stmt::Throw(throw)] = handler.body.stmts.as_slice() else {
+        return false;
+    };
+    let Expr::Seq(seq) = strip_parens(&throw.arg) else {
+        return false;
+    };
+    let [remember, thrown] = seq.exprs.as_slice() else {
+        return false;
+    };
+    let remembers_caught = matches!(assigned_value(remember, err), Some(Expr::Array(array))
+        if matches!(array.elems.as_slice(), [Some(ExprOrSpread { spread: None, expr })]
+            if is_ident(expr, caught)));
+    remembers_caught && is_ident(thrown, caught)
+}
+
+fn is_ident(expr: &Expr, sym: &Atom) -> bool {
+    matches!(strip_parens(expr), Expr::Ident(ident) if ident.sym == *sym)
+}
+
+fn is_zero(expr: &Expr) -> bool {
+    matches!(strip_parens(expr), Expr::Lit(Lit::Num(num)) if num.value == 0.0)
+}
+
+/// The right side of `target = value`, parentheses removed.
+fn assigned_value<'a>(expr: &'a Expr, target: &Atom) -> Option<&'a Expr> {
+    let Expr::Assign(assign) = strip_parens(expr) else {
+        return None;
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assign.left else {
+        return None;
+    };
+    (assign.op == AssignOp::Assign && binding.id.sym == *target)
+        .then(|| strip_parens(&assign.right))
 }
 
 fn expr_mentions_exports_member(expr: &Expr) -> bool {

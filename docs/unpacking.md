@@ -91,9 +91,16 @@ attempted in order — first match wins:
    is done only for a call in a top-level `var` initializer or expression
    statement (not in a function, class, accessor, or loop, where the
    factory could run more than once), and only for a helper declared by one
-   top-level `var` before the call and never written. Helpers are
-   found only where the input declares them: a code-split chunk that imports
-   `__commonJS` or `__esm` from another chunk is not split.
+   top-level `var` before the call and never written. rolldown's `__esmMin =
+   (fn, res, err) => () => { if (err) throw err[0]; try { return fn && (res =
+   fn(fn = 0)), res } catch (e) { throw err = [e], e } }` takes a third
+   parameter and is matched by its whole body; its factories become lazy ES
+   module initializers like `__esm`'s. The emitted initializer does not keep
+   a thrown error: where rolldown's helper throws the same error again on
+   every later call, a later call of the emitted one returns without running
+   the factory. Helpers are found only where the input declares them: a
+   code-split chunk that imports `__commonJS` or `__esm` from another chunk is
+   not split.
    Preserved Bun path comments are used only as filename hints for modules
    already found through structural helper patterns; they are not module
    boundaries by themselves. A lazy factory's object key is normally its
