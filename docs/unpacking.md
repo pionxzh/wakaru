@@ -710,8 +710,11 @@ wild-observed), where `R` is a function declared in that body that also
 gets `R.m = <table>`. Both assignments count in any expression position of
 the body's statements, since Terser merges bootstrap statements into an `if`
 test (`if (u.m = o, u.n = …, …) {…}`), a `return` argument, a declarator, or
-a `for` header (wild-observed); they do not count inside a nested function,
-arrow, or class, where a `.j` is not the runtime's id. The ids of an input
+a `for` header (wild-observed), and inside an IIFE there, since unminified
+webpack wraps each runtime module in one
+(`!function(){ __webpack_require__.j = 23 }()`, wild-observed); they do not
+count inside any other nested function, arrow, or class, where a `.j` is not
+the runtime's id. The ids of an input
 no detector splits are read too, with the chunk-loading global it binds as
 its build identity: a webpack 5 runtime-only chunk
 (`optimization.runtimeChunk`) has an empty module table, so it stays a plain

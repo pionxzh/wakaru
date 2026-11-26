@@ -82,9 +82,11 @@ impl std::fmt::Display for WebpackRuntimeId {
 /// `R.j = <value>` and `R.m = …` count in any expression position of that
 /// body's statements, since a minifier merges the bootstrap's statements into
 /// an `if` test, a `return` argument, a declarator, or a `for` header
-/// (`if (u.m = o, u.n = …, …) {…}`). They do not count inside a nested
-/// function, arrow, or class: a `.j` set in a callback is not the runtime's
-/// id. Two different ids in one bootstrap are both recorded.
+/// (`if (u.m = o, u.n = …, …) {…}`), and inside an IIFE there, which runs as
+/// part of the bootstrap (unminified webpack wraps each runtime module in
+/// one). They do not count inside any other nested function, arrow, or
+/// class: a `.j` set in a callback is not the runtime's id. Two different
+/// ids in one bootstrap are both recorded.
 pub(crate) fn webpack_runtime_ids(module: &Module) -> Vec<WebpackRuntimeId> {
     let mut ids = Vec::new();
     let top_level = module
@@ -191,8 +193,8 @@ fn collect_bootstrap_runtime_ids(stmts: &[&Stmt], ids: &mut Vec<WebpackRuntimeId
 }
 
 /// `R.m = …` and `R.j = …` on a declared function `R` in the bootstrap's own
-/// code: not inside a nested function (a declared function's body included),
-/// arrow, or class.
+/// code, IIFE bodies included: not inside any other nested function (a
+/// declared function's body included), arrow, or class.
 struct BootstrapAssignments<'a> {
     declared_functions: &'a HashSet<SwcAtom>,
     table_owners: HashSet<SwcAtom>,
@@ -200,6 +202,16 @@ struct BootstrapAssignments<'a> {
 }
 
 impl Visit for BootstrapAssignments<'_> {
+    // An IIFE runs as part of the bootstrap: webpack wraps each runtime
+    // module in one when no minifier inlines it
+    // (`!function(){ __webpack_require__.j = 23 }()`).
+    fn visit_expr(&mut self, expr: &Expr) {
+        match super::webpack5::extract_iife_body(expr) {
+            Some(body) => body.visit_children_with(self),
+            None => expr.visit_children_with(self),
+        }
+    }
+
     fn visit_function(&mut self, _: &Function) {}
 
     fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
@@ -896,13 +908,27 @@ mod tests {
 
     #[test]
     fn runtime_ids_in_nested_functions_do_not_count() {
-        // Not the runtime's own `.j`: a callback, a function body, a class.
+        // Not the runtime's own `.j`: a callback, a function body, an arrow
+        // that is not invoked, a class.
         assert_eq!(
-            ids("(()=>{var o={};function u(e){u.j=9}u.m=o,u.j=7,(()=>{u.j=8})(),setTimeout(function(){u.j=6}),class{x(){u.j=5}}})()"),
+            ids("(()=>{var o={};function u(e){u.j=9}u.m=o,u.j=7,u.f=()=>{u.j=8},setTimeout(function(){u.j=6}),class{x(){u.j=5}}})()"),
             vec![WebpackRuntimeId::Number(7.0)]
         );
         // `u.m` set only in a callback does not make `u` the runtime.
-        assert!(ids("(()=>{var o={};function u(e){}(()=>{u.m=o})(),u.j=7})()").is_empty());
+        assert!(ids("(()=>{var o={};function u(e){}setTimeout(()=>{u.m=o}),u.j=7})()").is_empty());
+    }
+
+    #[test]
+    fn runtime_ids_in_runtime_module_iifes_count() {
+        // Unminified webpack wraps each runtime module in an IIFE.
+        assert_eq!(
+            ids("!function(){var o={};function u(e){}u.m=o;!function(){u.j=8630}();(()=>{u.x=1})()}()"),
+            vec![WebpackRuntimeId::Number(8630.0)]
+        );
+        // An IIFE with arguments is a call like any other.
+        assert!(
+            ids("!function(){var o={};function u(e){}u.m=o;(function(r){r.j=7})(u)}()").is_empty()
+        );
     }
 
     #[test]

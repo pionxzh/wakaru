@@ -5890,10 +5890,29 @@ fn webpack5_runtime_id_assigned_inside_an_if_test_folds() {
 }
 
 #[test]
+fn webpack5_runtime_id_assigned_in_a_runtime_module_iife_folds() {
+    // Unminified webpack wraps each runtime module in an IIFE.
+    let runtime = runtime_with_id("23", "966").replace(",t.j=23,", ",(()=>{t.j=23})(),");
+    assert!(runtime.contains("(()=>{t.j=23})()"));
+    let output = unpack_sources(&[
+        ("entry0.js", runtime),
+        ("shared.js", shared_chunk(SHARED_23)),
+    ]);
+    let shared = output_module(&output, "module-805.js");
+    assert!(shared.contains("export class A"), "{shared}");
+    assert!(!shared.contains("require.j"), "{shared}");
+    assert!(
+        runtime_id_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
+}
+
+#[test]
 fn webpack5_runtime_id_set_in_a_nested_arrow_is_ignored() {
     // `t.j = 695` runs in a callback, not as the runtime's own id.
-    let runtime = runtime_with_id("23", "966").replace(",t.j=23,", ",t.j=23,(()=>{t.j=695})(),");
-    assert!(runtime.contains("(()=>{t.j=695})()"));
+    let runtime = runtime_with_id("23", "966").replace(",t.j=23,", ",t.j=23,t.g=()=>{t.j=695},");
+    assert!(runtime.contains("t.g=()=>{t.j=695}"));
     let output = unpack_sources(&[
         ("entry0.js", runtime),
         ("shared.js", shared_chunk(SHARED_23)),
