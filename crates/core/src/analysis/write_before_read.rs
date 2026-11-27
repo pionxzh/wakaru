@@ -16,9 +16,12 @@
 //! - `return`, `throw`, `break`, and `continue` end their path, so the
 //!   statements after them in the same list are not on it.
 //!
-//! A write counts only in the plain forms `x = value` (as a statement, as an
-//! element of a sequence statement, or as an `if`/loop test) and `var x =
-//! value`, with a value that does not mention the binding. Any other mention
+//! A write counts only in the plain forms `x = value` and `var x = value`,
+//! with a value that does not mention the binding. The `x = value` form
+//! counts as a statement, an `if`/loop test, or an operand that always runs
+//! first within one: a sequence element, or either side of a binary operator
+//! other than `&&`, `||`, and `??`, whose right side may be skipped and only
+//! reads (`(x = next()) !== null`, `a, (x = f()) < n`). Any other mention
 //! — inside a nested function or class, in a compound assignment, in a
 //! destructuring pattern, or under `with` — counts as a read where it
 //! appears, and a mention inside a function declaration counts as a read
@@ -207,6 +210,17 @@ impl Walk<'_> {
                 .exprs
                 .iter()
                 .fold(written, |written, expr| self.effect(expr, written)),
+            // Both operands always run, left first, except that a logical
+            // operator's right side may not run, so it can only read.
+            Expr::Bin(bin) => {
+                let written = self.effect(&bin.left, written);
+                if bin.op.may_short_circuit() {
+                    self.read(&bin.right, written);
+                    written
+                } else {
+                    self.effect(&bin.right, written)
+                }
+            }
             Expr::Assign(assign)
                 if assign.op == AssignOp::Assign
                     && matches!(
@@ -324,6 +338,19 @@ mod tests {
         assert!(check("for (; (x = next()); ) use(x);"));
         assert!(check("x = 0; while (c()) { use(x); x = 1; }"));
         assert!(!check("while (c()) { use(x); x = 1; }"));
+    }
+
+    #[test]
+    fn writes_inside_operands_that_always_run() {
+        assert!(check("while ((x = next()) !== null) use(x); use(x);"));
+        assert!(check("while (a(), (x = next()) < n) use(x);"));
+        assert!(check("if (n < (x = next())) use(x);"));
+        // The left operand runs first, so it reads before the write.
+        assert!(!check("if (x < (x = next())) use(x);"));
+        // A logical operator's right side may be skipped.
+        assert!(!check("if (ok() && (x = next())) {} use(x);"));
+        assert!(!check("if (a() || (x = next()) !== null) {} use(x);"));
+        assert!(check("if ((x = next()) || fallback()) use(x);"));
     }
 
     #[test]

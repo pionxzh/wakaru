@@ -7602,7 +7602,7 @@ function El(e) {
                             let v = focusedElem;
                             let b = null;
                             t: while(true){
-                                var g;
+                                let g;
                                 while(v !== selectionRange || s !== 0 && v.nodeType !== 3 || (start = d + s), v !== f || c !== 0 && v.nodeType !== 3 || (end = d + c), v.nodeType === 3 && (d += v.nodeValue.length), (g = v.firstChild) !== null){
                                     b = v;
                                     v = g;

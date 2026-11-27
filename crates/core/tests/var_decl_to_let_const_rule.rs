@@ -2661,3 +2661,43 @@ for (let i = 0; i < 2; i++) {
 "#;
     assert_eq_normalized(&apply_rule(input), expected);
 }
+
+#[test]
+fn loop_body_var_written_inside_a_loop_test_operand_becomes_let() {
+    // The test assigns `w` before every pass of the inner loop and before it
+    // exits, so the read after it never sees an earlier iteration's value.
+    let input = r#"
+for (var i = 0; i < 3; i++) {
+  var w;
+  while ((w = next()) !== null) use(w);
+  use(w);
+}
+"#;
+    let expected = r#"
+for (let i = 0; i < 3; i++) {
+  let w;
+  while ((w = next()) !== null) use(w);
+  use(w);
+}
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn loop_body_var_written_only_on_a_logical_right_side_stays_var() {
+    let input = r#"
+for (var i = 0; i < 3; i++) {
+  var w;
+  if (ready(i) && (w = next()) !== null) use(w);
+  use(w);
+}
+"#;
+    let expected = r#"
+for (let i = 0; i < 3; i++) {
+  var w;
+  if (ready(i) && (w = next()) !== null) use(w);
+  use(w);
+}
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
