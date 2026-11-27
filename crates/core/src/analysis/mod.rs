@@ -1,5 +1,6 @@
 pub(crate) mod binding_uses;
 pub(crate) mod purity;
+pub(crate) mod write_before_read;
 
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;

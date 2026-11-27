@@ -2547,3 +2547,79 @@ for (let i = 0; i < 3; i++) {
 "#;
     assert_eq_normalized(&apply_rule(input), expected);
 }
+
+#[test]
+fn loop_body_var_written_on_every_path_before_a_read_becomes_let() {
+    let input = r#"
+for (var i = 0; i < 2; i++) {
+  var x;
+  if (ready(i)) {
+    x = i;
+    use(x);
+  }
+  var y;
+  if (ok(i)) y = 1;
+  else y = 2;
+  use(y);
+}
+"#;
+    let expected = r#"
+for (let i = 0; i < 2; i++) {
+  let x;
+  if (ready(i)) {
+    x = i;
+    use(x);
+  }
+  let y;
+  if (ok(i)) y = 1;
+  else y = 2;
+  use(y);
+}
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn loop_body_var_a_jump_can_skip_the_write_of_stays_var() {
+    // Each read can run before this iteration's write, so it sees the value
+    // an earlier iteration left.
+    let input = r#"
+for (var i = 0; i < 2; i++) {
+  var a;
+  done: {
+    if (stop(i)) break done;
+    a = i;
+  }
+  use(a);
+  var b;
+  while (more()) b = i;
+  use(b);
+  var c;
+  try {
+    risky();
+    c = i;
+  } catch (e) {}
+  use(c);
+}
+"#;
+    let expected = r#"
+for (let i = 0; i < 2; i++) {
+  var a;
+  done: {
+    if (stop(i)) break done;
+    a = i;
+  }
+  use(a);
+  var b;
+  while (more()) b = i;
+  use(b);
+  var c;
+  try {
+    risky();
+    c = i;
+  } catch (e) {}
+  use(c);
+}
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}

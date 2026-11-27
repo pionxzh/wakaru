@@ -12,6 +12,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::BindingId;
 use super::expr_utils::is_unresolved_undefined;
+use crate::analysis::write_before_read::written_before_read;
 use crate::utils::paren::strip_parens;
 
 use super::eval_utils::{js_source_mentions_binding, DirectEvalAnalyzer};
@@ -1208,9 +1209,10 @@ impl Visit for LoopCapturedVarCollector {
 /// A `var` declared without an initializer in a loop body keeps the value an
 /// earlier iteration gave it, while a `let` there starts every iteration as
 /// `undefined`. When anything assigns such a var, converting it can change
-/// what a read sees, so it stays `var` — unless the first later statement of
-/// its block that mentions it starts by writing it, so no read can see the
-/// carried value. (Reads outside the declaring block already keep it `var`.)
+/// what a read sees, so it stays `var` — unless every path through the rest
+/// of its block writes it before reading it ([`written_before_read`]), so no
+/// read can see the carried value. (Reads outside the declaring block, and
+/// closures in the loop that capture it, already keep it `var`.)
 fn collect_loop_body_carried_vars<N>(
     nodes: &[N],
     assigned: &HashSet<BindingId>,
@@ -1260,14 +1262,9 @@ impl Visit for LoopBodyUninitVarCollector {
                 collect_binding_ids_from_pat(&decl.name, &mut ids);
                 let later_decls = &var.decls[decl_index + 1..];
                 for id in ids {
-                    // `var x, y = x;` reads the carried value before any later
-                    // statement can write it.
-                    let read_by_later_decl = later_decls.iter().any(|later| {
-                        let mut refs = AllIdentRefCollector::default();
-                        later.visit_with(&mut refs);
-                        refs.refs.contains(&id)
-                    });
-                    if read_by_later_decl || !first_mention_writes(&stmts[index + 1..], &id) {
+                    // The later declarators run first: `var x, y = x;` reads
+                    // the carried value before any statement can write it.
+                    if !written_before_read(later_decls, &stmts[index + 1..], &id) {
                         self.ids.insert(id);
                     }
                 }
@@ -1310,38 +1307,6 @@ impl Visit for LoopBodyUninitVarCollector {
     fn visit_function(&mut self, _: &Function) {}
     fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
     fn visit_class(&mut self, _: &Class) {}
-}
-
-/// Whether the first statement in `stmts` that mentions `id` begins with a
-/// plain `id = value` (as the statement itself or as an `if` test) whose
-/// value does not mention `id`.
-fn first_mention_writes(stmts: &[Stmt], id: &BindingId) -> bool {
-    let mentions = |node: &dyn Fn(&mut AllIdentRefCollector)| {
-        let mut refs = AllIdentRefCollector::default();
-        node(&mut refs);
-        refs.refs.contains(id)
-    };
-    let Some(stmt) = stmts
-        .iter()
-        .find(|stmt| mentions(&|refs| stmt.visit_with(refs)))
-    else {
-        return false;
-    };
-    let expr = match stmt {
-        Stmt::Expr(expr_stmt) => &*expr_stmt.expr,
-        Stmt::If(if_stmt) => &*if_stmt.test,
-        _ => return false,
-    };
-    let Expr::Assign(assign) = strip_parens(expr) else {
-        return false;
-    };
-    assign.op == swc_core::ecma::ast::AssignOp::Assign
-        && matches!(
-            &assign.left,
-            AssignTarget::Simple(SimpleAssignTarget::Ident(target))
-                if (target.id.sym.clone(), target.id.ctxt) == *id
-        )
-        && !mentions(&|refs| assign.right.visit_with(refs))
 }
 
 #[derive(Default)]
