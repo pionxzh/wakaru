@@ -11,6 +11,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::binding_facts::BodyTempIsolation;
 use super::cross_module_helper_refs::{
     collect_cross_module_ts_helper_refs, cross_module_ts_member_helper,
 };
@@ -378,7 +379,13 @@ fn try_transform_generator(
     body.stmts.remove(return_idx);
 
     // Insert new statements where the return was
+    let spliced_end = return_idx + extracted.stmts.len();
     body.stmts.splice(return_idx..return_idx, extracted.stmts);
+    fold_spliced_memoized_member_apply_calls(
+        &mut body.stmts,
+        return_idx..spliced_end,
+        reserved_names,
+    );
     true
 }
 
@@ -1123,7 +1130,7 @@ fn decode_state_machine(
         }
     }
 
-    let mut recovered = StateMachineProgram::from_labeled_stmts(output, trys)
+    let recovered = StateMachineProgram::from_labeled_stmts(output, trys)
         .with_catch_bindings(catch_bindings)
         .with_index_loops(IndexLoopContinueMode::AdjacentBackEdge)
         .recover_conditional_assignments()
@@ -1133,7 +1140,6 @@ fn decode_state_machine(
             ForwardJumpJoin::MidMachine,
         )
         .into_reconstructed_stmts_with_index_loops(IndexLoopContinueMode::AdjacentBackEdge);
-    fold_memoized_member_apply_calls(&mut recovered);
     if stmts_contain_state_opcode_return(&recovered, OpcodeReturnScan::SkipNestedFunctions) {
         return None;
     }
@@ -1679,17 +1685,36 @@ impl VisitMut for CatchValueReplacer {
     }
 }
 
-fn fold_memoized_member_apply_calls(stmts: &mut Vec<Stmt>) {
+/// Fold `_b = (_a = o).m; _b.apply(_a, args)` back into `o.m(...)` within
+/// the statements a decoded state machine spliced into `stmts`. This runs
+/// once the decoded body is back in its function, so the temps' declarations
+/// and every use they have in the function reach the isolation proof.
+fn fold_spliced_memoized_member_apply_calls(
+    stmts: &mut Vec<Stmt>,
+    spliced: std::ops::Range<usize>,
+    params: &HashSet<Atom>,
+) {
+    let isolation = BodyTempIsolation::collect(stmts, params);
+    let mut tail = stmts.split_off(spliced.end);
+    let mut decoded = stmts.split_off(spliced.start);
+    fold_memoized_member_apply_calls(&mut decoded, &isolation);
+    stmts.append(&mut decoded);
+    stmts.append(&mut tail);
+}
+
+fn fold_memoized_member_apply_calls(stmts: &mut Vec<Stmt>, isolation: &BodyTempIsolation) {
     let mut folded = Vec::new();
     let mut index = 0usize;
 
     while index < stmts.len() {
-        if let Some((stmt, consumed)) = try_fold_memoized_member_apply_call(&stmts[index..]) {
+        if let Some((stmt, consumed)) =
+            try_fold_memoized_member_apply_call(&stmts[index..], isolation)
+        {
             folded.push(stmt);
             index += consumed;
         } else {
             let mut stmt = stmts[index].clone();
-            fold_memoized_member_apply_calls_in_stmt(&mut stmt);
+            fold_memoized_member_apply_calls_in_stmt(&mut stmt, isolation);
             folded.push(stmt);
             index += 1;
         }
@@ -1698,43 +1723,46 @@ fn fold_memoized_member_apply_calls(stmts: &mut Vec<Stmt>) {
     *stmts = folded;
 }
 
-fn fold_memoized_member_apply_calls_in_stmt(stmt: &mut Stmt) {
+fn fold_memoized_member_apply_calls_in_stmt(stmt: &mut Stmt, isolation: &BodyTempIsolation) {
     match stmt {
-        Stmt::Block(block) => fold_memoized_member_apply_calls(&mut block.stmts),
+        Stmt::Block(block) => fold_memoized_member_apply_calls(&mut block.stmts, isolation),
         Stmt::For(for_stmt) => {
             if let Stmt::Block(block) = for_stmt.body.as_mut() {
-                fold_memoized_member_apply_calls(&mut block.stmts);
+                fold_memoized_member_apply_calls(&mut block.stmts, isolation);
             }
         }
         Stmt::Try(try_stmt) => {
-            fold_memoized_member_apply_calls(&mut try_stmt.block.stmts);
+            fold_memoized_member_apply_calls(&mut try_stmt.block.stmts, isolation);
             if let Some(handler) = &mut try_stmt.handler {
-                fold_memoized_member_apply_calls(&mut handler.body.stmts);
+                fold_memoized_member_apply_calls(&mut handler.body.stmts, isolation);
             }
             if let Some(finalizer) = &mut try_stmt.finalizer {
-                fold_memoized_member_apply_calls(&mut finalizer.stmts);
+                fold_memoized_member_apply_calls(&mut finalizer.stmts, isolation);
             }
         }
         Stmt::If(if_stmt) => {
-            fold_memoized_member_apply_calls_in_stmt(&mut if_stmt.cons);
+            fold_memoized_member_apply_calls_in_stmt(&mut if_stmt.cons, isolation);
             if let Some(alt) = &mut if_stmt.alt {
-                fold_memoized_member_apply_calls_in_stmt(alt);
+                fold_memoized_member_apply_calls_in_stmt(alt, isolation);
             }
         }
         _ => {}
     }
 }
 
-fn try_fold_memoized_member_apply_call(stmts: &[Stmt]) -> Option<(Stmt, usize)> {
+fn try_fold_memoized_member_apply_call(
+    stmts: &[Stmt],
+    isolation: &BodyTempIsolation,
+) -> Option<(Stmt, usize)> {
     let first = stmts.first()?;
     let first_span = first.span();
     let (method_key, member) = extract_memoized_member_assign(first)?;
     let call = extract_bound_memoized_member_call(stmts.get(1)?, &method_key, &member)?;
     let mut keys = vec![method_key];
     keys.extend(memoized_member_temp_keys(&member));
-    if keys
+    if !keys
         .iter()
-        .any(|key| local_temp_read_before_reassign(&stmts[2..], key))
+        .all(|key| isolation.is_isolated_to(key, &stmts[..2]))
     {
         return None;
     }
@@ -1911,77 +1939,6 @@ fn local_temp_key(expr: &Expr) -> Option<BindingKey> {
         return None;
     };
     Some(binding_key(id))
-}
-
-fn local_temp_read_before_reassign(stmts: &[Stmt], key: &BindingKey) -> bool {
-    for stmt in stmts {
-        if let Some(rhs) = direct_local_temp_reassign_rhs(stmt, key) {
-            return expr_reads_local_temp(rhs, key);
-        }
-        if stmt_reads_local_temp(stmt, key) {
-            return true;
-        }
-    }
-    false
-}
-
-fn direct_local_temp_reassign_rhs<'a>(stmt: &'a Stmt, key: &BindingKey) -> Option<&'a Expr> {
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
-        return None;
-    };
-    let Expr::Assign(assign) = expr.as_ref() else {
-        return None;
-    };
-    if assign.op != AssignOp::Assign || !assign_target_matches_local_temp(&assign.left, key) {
-        return None;
-    }
-    Some(&assign.right)
-}
-
-fn stmt_reads_local_temp(stmt: &Stmt, key: &BindingKey) -> bool {
-    let mut finder = LocalTempReadFinder { key, found: false };
-    stmt.visit_with(&mut finder);
-    finder.found
-}
-
-fn expr_reads_local_temp(expr: &Expr, key: &BindingKey) -> bool {
-    let mut finder = LocalTempReadFinder { key, found: false };
-    expr.visit_with(&mut finder);
-    finder.found
-}
-
-struct LocalTempReadFinder<'a> {
-    key: &'a BindingKey,
-    found: bool,
-}
-
-impl Visit for LocalTempReadFinder<'_> {
-    fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
-        if let Some(init) = &decl.init {
-            init.visit_with(self);
-        }
-    }
-
-    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
-        if !assign_target_matches_local_temp(&assign.left, self.key) {
-            assign.left.visit_with(self);
-        }
-        assign.right.visit_with(self);
-    }
-
-    fn visit_ident(&mut self, ident: &Ident) {
-        if ident.sym == self.key.0 && ident.ctxt == self.key.1 {
-            self.found = true;
-        }
-    }
-}
-
-fn assign_target_matches_local_temp(target: &AssignTarget, key: &BindingKey) -> bool {
-    matches!(
-        target,
-        AssignTarget::Simple(SimpleAssignTarget::Ident(binding))
-            if binding.id.sym == key.0 && binding.id.ctxt == key.1
-    )
 }
 
 // ============================================================

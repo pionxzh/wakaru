@@ -3595,3 +3595,60 @@ export async function load(url) {
 "#;
     assert_eq_normalized(&render(input), expected);
 }
+
+#[test]
+fn memoized_member_apply_keeps_temps_read_after_the_enclosing_block() {
+    // The fold drops both temp writes, so it must see every read in the
+    // function: here the return after the `if` block reads them.
+    let input = r#"
+function collect(output, flag) {
+  return __awaiter(this, void 0, void 0, function () {
+    var _a, _b;
+    return __generator(this, function (_c) {
+      switch (_c.label) {
+        case 0:
+          if (!flag) return [3, 2];
+          _b = (_a = output).push;
+          return [4, fetch_item()];
+        case 1:
+          _b.apply(_a, [_c.sent()]);
+          _c.label = 2;
+        case 2:
+          return [2, [_a, _b]];
+      }
+    });
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("_b = (_a = output).push") && output.contains("_b.apply(_a"),
+        "temps read after the block must keep their writes:\n{output}"
+    );
+}
+
+#[test]
+fn memoized_member_apply_keeps_temps_the_function_does_not_declare() {
+    // Undeclared temps resolve to outer bindings, which see the writes.
+    let input = r#"
+function collect(output) {
+  return __awaiter(this, void 0, void 0, function () {
+    return __generator(this, function (_c) {
+      switch (_c.label) {
+        case 0:
+          _b = (_a = output).push;
+          return [4, fetch_item()];
+        case 1:
+          _b.apply(_a, [_c.sent()]);
+          return [2];
+      }
+    });
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("_b = (_a = output).push") && output.contains("_b.apply(_a"),
+        "writes to outer bindings must stay:\n{output}"
+    );
+}

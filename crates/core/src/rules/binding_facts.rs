@@ -1,5 +1,6 @@
 use crate::collections::{HashMap, HashSet};
 
+use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{Expr, Module, Pat, Stmt, VarDecl};
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -190,6 +191,48 @@ impl TempIsolation {
                 .sum();
             self.is_isolated(binding, consumed)
         })
+    }
+}
+
+/// [`TempIsolation`]'s proof for a function body that a state-machine decoder
+/// has just rebuilt and spliced back in, before any module-wide index exists
+/// for it.
+///
+/// A fold that drops a temp's write may do so only when:
+/// - the temp is not a parameter (sloppy-mode `arguments` aliases one);
+/// - its only declaration is an uninitialized declarator in `body` that a
+///   pattern may assign
+///   ([`BindingUseIndex::assignable_uninitialized_bindings`]), so the write
+///   never reaches an outer or global binding;
+/// - every use of it in `body` lies in the statements the fold consumes.
+///
+/// The last condition counts uses across the whole body. A read after the
+/// block that holds the fold, or one an earlier statement of a loop body
+/// makes on the next iteration, therefore keeps the write.
+pub(crate) struct BodyTempIsolation<'a> {
+    uses: BindingUseIndex,
+    assignable: HashSet<BindingId>,
+    params: &'a HashSet<Atom>,
+}
+
+impl<'a> BodyTempIsolation<'a> {
+    pub(crate) fn collect(body: &[Stmt], params: &'a HashSet<Atom>) -> Self {
+        let uses = BindingUseIndex::collect_stmts(body);
+        let assignable = uses.assignable_uninitialized_bindings();
+        Self {
+            uses,
+            assignable,
+            params,
+        }
+    }
+
+    /// Whether `pattern` holds every use of `binding` in the body.
+    pub(crate) fn is_isolated_to(&self, binding: &BindingId, pattern: &[Stmt]) -> bool {
+        !self.params.contains(&binding.0)
+            && self.assignable.contains(binding)
+            && self.uses.has_single_declaration(binding)
+            && self.uses.use_count(binding)
+                == BindingUseIndex::collect_stmts(pattern).use_count(binding)
     }
 }
 

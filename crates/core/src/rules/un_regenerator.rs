@@ -15,6 +15,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::facts::{HelperKind, ModuleFactsMap};
 
 use super::await_spill_temps::fold_await_spill_temps;
+use super::binding_facts::BodyTempIsolation;
 use super::decl_utils::{
     collect_decl_binding_ids, collect_pat_names, collect_var_decl_binding_ids, fresh_binding_ident,
     BindingId,
@@ -1171,7 +1172,9 @@ fn try_transform_regenerator_wrap_with_reserved(
         return None;
     }
     body.stmts.remove(return_idx);
+    let spliced_end = return_idx + new_stmts.len();
     body.stmts.splice(return_idx..return_idx, new_stmts);
+    fold_spliced_local_temp_member_calls(&mut body.stmts, return_idx..spliced_end, reserved_names);
     fold_await_spill_temps(&mut body.stmts, &slot_locals);
     Some(mark_name)
 }
@@ -3446,7 +3449,6 @@ fn fold_state_temp_member_calls(state_param: &Ident, stmts: &mut Vec<Stmt>) {
     while index < stmts.len() {
         if let Some((stmt, consumed)) =
             try_fold_state_temp_member_call(state_param, &stmts[index..])
-                .or_else(|| try_fold_local_temp_member_call(&stmts[index..]))
         {
             folded.push(stmt);
             index += consumed;
@@ -3508,10 +3510,77 @@ fn try_fold_state_temp_member_call(state_param: &Ident, stmts: &[Stmt]) -> Optio
     ))
 }
 
-fn try_fold_local_temp_member_call(stmts: &[Stmt]) -> Option<(Stmt, usize)> {
+/// Fold `_t = o; _t.m.call(_t, args)` back into `o.m(args)` within the
+/// statements a decoded state machine spliced into `stmts`. This runs once
+/// the decoded body is back in its function, so the temp's declaration and
+/// every use it has in the function reach the isolation proof.
+fn fold_spliced_local_temp_member_calls(
+    stmts: &mut Vec<Stmt>,
+    spliced: std::ops::Range<usize>,
+    params: &HashSet<Atom>,
+) {
+    let isolation = BodyTempIsolation::collect(stmts, params);
+    let mut tail = stmts.split_off(spliced.end);
+    let mut decoded = stmts.split_off(spliced.start);
+    fold_local_temp_member_calls(&mut decoded, &isolation);
+    stmts.append(&mut decoded);
+    stmts.append(&mut tail);
+}
+
+fn fold_local_temp_member_calls(stmts: &mut Vec<Stmt>, isolation: &BodyTempIsolation) {
+    let mut folded = Vec::new();
+    let mut index = 0usize;
+
+    while index < stmts.len() {
+        if let Some((stmt, consumed)) = try_fold_local_temp_member_call(&stmts[index..], isolation)
+        {
+            folded.push(stmt);
+            index += consumed;
+        } else {
+            let mut stmt = stmts[index].clone();
+            fold_local_temp_member_calls_in_stmt(&mut stmt, isolation);
+            folded.push(stmt);
+            index += 1;
+        }
+    }
+
+    *stmts = folded;
+}
+
+fn fold_local_temp_member_calls_in_stmt(stmt: &mut Stmt, isolation: &BodyTempIsolation) {
+    match stmt {
+        Stmt::Block(block) => fold_local_temp_member_calls(&mut block.stmts, isolation),
+        Stmt::For(for_stmt) => {
+            if let Stmt::Block(block) = for_stmt.body.as_mut() {
+                fold_local_temp_member_calls(&mut block.stmts, isolation);
+            }
+        }
+        Stmt::Try(try_stmt) => {
+            fold_local_temp_member_calls(&mut try_stmt.block.stmts, isolation);
+            if let Some(handler) = &mut try_stmt.handler {
+                fold_local_temp_member_calls(&mut handler.body.stmts, isolation);
+            }
+            if let Some(finalizer) = &mut try_stmt.finalizer {
+                fold_local_temp_member_calls(&mut finalizer.stmts, isolation);
+            }
+        }
+        Stmt::If(if_stmt) => {
+            fold_local_temp_member_calls_in_stmt(&mut if_stmt.cons, isolation);
+            if let Some(alt) = &mut if_stmt.alt {
+                fold_local_temp_member_calls_in_stmt(alt, isolation);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn try_fold_local_temp_member_call(
+    stmts: &[Stmt],
+    isolation: &BodyTempIsolation,
+) -> Option<(Stmt, usize)> {
     let (receiver_key, receiver) = extract_local_temp_assign(stmts.first()?)?;
     let call = extract_bound_local_member_call(stmts.get(1)?, &receiver_key, receiver)?;
-    if local_temp_read_before_reassign(&stmts[2..], &receiver_key) {
+    if !isolation.is_isolated_to(&receiver_key, &stmts[..2]) {
         return None;
     }
     Some((
@@ -3521,77 +3590,6 @@ fn try_fold_local_temp_member_call(stmts: &[Stmt]) -> Option<(Stmt, usize)> {
         }),
         2,
     ))
-}
-
-fn local_temp_read_before_reassign(stmts: &[Stmt], key: &BindingKey) -> bool {
-    for stmt in stmts {
-        if let Some(rhs) = direct_local_temp_reassign_rhs(stmt, key) {
-            return expr_reads_local_temp(rhs, key);
-        }
-        if stmt_reads_local_temp(stmt, key) {
-            return true;
-        }
-    }
-    false
-}
-
-fn direct_local_temp_reassign_rhs<'a>(stmt: &'a Stmt, key: &BindingKey) -> Option<&'a Expr> {
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
-        return None;
-    };
-    let Expr::Assign(assign) = expr.as_ref() else {
-        return None;
-    };
-    if assign.op != AssignOp::Assign || !assign_target_matches_local_temp(&assign.left, key) {
-        return None;
-    }
-    Some(&assign.right)
-}
-
-fn stmt_reads_local_temp(stmt: &Stmt, key: &BindingKey) -> bool {
-    let mut finder = LocalTempReadFinder { key, found: false };
-    stmt.visit_with(&mut finder);
-    finder.found
-}
-
-fn expr_reads_local_temp(expr: &Expr, key: &BindingKey) -> bool {
-    let mut finder = LocalTempReadFinder { key, found: false };
-    expr.visit_with(&mut finder);
-    finder.found
-}
-
-struct LocalTempReadFinder<'a> {
-    key: &'a BindingKey,
-    found: bool,
-}
-
-impl Visit for LocalTempReadFinder<'_> {
-    fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
-        if let Some(init) = &decl.init {
-            init.visit_with(self);
-        }
-    }
-
-    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
-        if !assign_target_matches_local_temp(&assign.left, self.key) {
-            assign.left.visit_with(self);
-        }
-        assign.right.visit_with(self);
-    }
-
-    fn visit_ident(&mut self, ident: &Ident) {
-        if ident.sym == self.key.0 && ident.ctxt == self.key.1 {
-            self.found = true;
-        }
-    }
-}
-
-fn assign_target_matches_local_temp(target: &AssignTarget, key: &BindingKey) -> bool {
-    matches!(
-        target,
-        AssignTarget::Simple(SimpleAssignTarget::Ident(binding))
-            if binding.id.sym == key.0 && binding.id.ctxt == key.1
-    )
 }
 
 fn extract_local_temp_assign(stmt: &Stmt) -> Option<(BindingKey, Box<Expr>)> {

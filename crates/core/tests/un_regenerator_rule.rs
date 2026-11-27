@@ -6457,3 +6457,37 @@ schedule(_asyncToGenerator(_regenerator().m(function _callee() {
         "the inline mark must go with the recovered body:\n{output}"
     );
 }
+
+#[test]
+fn local_temp_member_call_keeps_temp_read_after_the_enclosing_block() {
+    // The fold drops the temp's write, so it must see every read in the
+    // function: here the return after the `if` block reads it.
+    let input = r#"
+var _marked = regeneratorRuntime.mark(myGen);
+function myGen(receiver, flag, arg) {
+  var _t;
+  return regeneratorRuntime.wrap(function(_context) {
+    while (true) {
+      switch (_context.prev = _context.next) {
+        case 0:
+          if (!flag) {
+            _context.next = 3;
+            break;
+          }
+          _t = receiver;
+          _t.method.call(_t, arg);
+        case 3:
+          return _context.abrupt("return", _t);
+        case "end":
+          return _context.stop();
+      }
+    }
+  }, _marked, this);
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("_t = receiver") && output.contains("_t.method.call(_t, arg)"),
+        "a temp read after the block must keep its write:\n{output}"
+    );
+}
