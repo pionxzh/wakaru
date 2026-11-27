@@ -6,13 +6,13 @@ use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignTarget, BlockStmt, CatchClause, Class, Decl, ExportSpecifier,
     Expr, ForHead, ForInStmt, ForOfStmt, ForStmt, Function, Ident, Lit, MemberProp, Module,
     ModuleDecl, ModuleExportName, ModuleItem, Pat, SimpleAssignTarget, Stmt, SwitchStmt,
-    UpdateExpr, VarDecl, VarDeclKind, WithStmt,
+    UpdateExpr, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator, WithStmt,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::BindingId;
 use super::expr_utils::is_unresolved_undefined;
-use crate::analysis::write_before_read::written_before_read;
+use crate::analysis::write_before_read::{for_head_written_before_read, written_before_read};
 use crate::utils::paren::strip_parens;
 
 use super::eval_utils::{js_source_mentions_binding, DirectEvalAnalyzer};
@@ -1240,6 +1240,29 @@ impl LoopBodyUninitVarCollector {
         body.visit_with(self);
         self.loop_body_depth -= 1;
     }
+
+    /// Records each uninitialized declarator of a loop-body `var` unless
+    /// `written_first` proves no read can see its carried value. It gets the
+    /// later declarators, which run first (`var x, y = x;` reads it).
+    fn record_carried_decls(
+        &mut self,
+        decls: &[VarDeclarator],
+        written_first: impl Fn(&[VarDeclarator], &BindingId) -> bool,
+    ) {
+        for (index, decl) in decls.iter().enumerate() {
+            if decl.init.is_some() {
+                decl.visit_with(self);
+                continue;
+            }
+            let mut ids = HashSet::default();
+            collect_binding_ids_from_pat(&decl.name, &mut ids);
+            for id in ids {
+                if !written_first(&decls[index + 1..], &id) {
+                    self.ids.insert(id);
+                }
+            }
+        }
+    }
 }
 
 impl Visit for LoopBodyUninitVarCollector {
@@ -1253,22 +1276,9 @@ impl Visit for LoopBodyUninitVarCollector {
                 stmt.visit_with(self);
                 continue;
             }
-            for (decl_index, decl) in var.decls.iter().enumerate() {
-                if decl.init.is_some() {
-                    decl.visit_with(self);
-                    continue;
-                }
-                let mut ids = HashSet::default();
-                collect_binding_ids_from_pat(&decl.name, &mut ids);
-                let later_decls = &var.decls[decl_index + 1..];
-                for id in ids {
-                    // The later declarators run first: `var x, y = x;` reads
-                    // the carried value before any statement can write it.
-                    if !written_before_read(later_decls, &stmts[index + 1..], &id) {
-                        self.ids.insert(id);
-                    }
-                }
-            }
+            self.record_carried_decls(&var.decls, |later_decls, id| {
+                written_before_read(later_decls, &stmts[index + 1..], id)
+            });
         }
     }
 
@@ -1282,7 +1292,18 @@ impl Visit for LoopBodyUninitVarCollector {
     }
 
     fn visit_for_stmt(&mut self, stmt: &ForStmt) {
-        stmt.init.visit_with(self);
+        match &stmt.init {
+            // `for (var x; x = next(); )` in a loop body: the head starts from
+            // the carried value, so the test and body must write it first.
+            Some(VarDeclOrExpr::VarDecl(var))
+                if self.loop_body_depth > 0 && var.kind == VarDeclKind::Var =>
+            {
+                self.record_carried_decls(&var.decls, |later_decls, id| {
+                    for_head_written_before_read(later_decls, stmt, id)
+                });
+            }
+            init => init.visit_with(self),
+        }
         self.visit_loop_body(&stmt.body);
     }
 

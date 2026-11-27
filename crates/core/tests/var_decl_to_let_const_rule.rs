@@ -2701,3 +2701,235 @@ for (let i = 0; i < 3; i++) {
 "#;
     assert_eq_normalized(&apply_rule(input), expected);
 }
+
+#[test]
+fn loop_body_var_written_in_every_switch_case_becomes_let() {
+    let input = r#"
+while (more()) {
+  var a, b;
+  switch (kind()) {
+    case 1:
+      a = one();
+      b = two();
+      use(a, b);
+      break;
+    case 2:
+      prepare();
+    case 3:
+      a = three();
+      b = four();
+      use(a, b);
+      break;
+    default:
+      a = b = 0;
+  }
+  use(a, b);
+}
+"#;
+    let expected = r#"
+while (more()) {
+  let a, b;
+  switch (kind()) {
+    case 1:
+      a = one();
+      b = two();
+      use(a, b);
+      break;
+    case 2:
+      prepare();
+    case 3:
+      a = three();
+      b = four();
+      use(a, b);
+      break;
+    default:
+      a = b = 0;
+  }
+  use(a, b);
+}
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn loop_body_var_written_in_both_if_branches_becomes_let() {
+    let input = r#"
+while (more()) {
+  var a, b;
+  if (size() < 16) {
+    b = first();
+    a = second();
+  } else {
+    b = third();
+    a = fourth();
+  }
+  use(a, b);
+}
+"#;
+    let expected = r#"
+while (more()) {
+  let a, b;
+  if (size() < 16) {
+    b = first();
+    a = second();
+  } else {
+    b = third();
+    a = fourth();
+  }
+  use(a, b);
+}
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn loop_body_var_written_inside_call_argument_becomes_let() {
+    let input = r#"
+while (more()) {
+  var a, b;
+  out.push(a = make());
+  check() ? (b = 1) : (b = 2);
+  use(a, b);
+}
+"#;
+    let expected = r#"
+while (more()) {
+  let a, b;
+  out.push(a = make());
+  check() ? b = 1 : b = 2;
+  use(a, b);
+}
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn loop_body_for_head_var_written_in_test_becomes_let() {
+    let input = r#"
+while (more()) {
+  for (var item; item = next(), !item.done; ) {
+    use(item.value);
+  }
+}
+"#;
+    let expected = r#"
+while (more()) {
+  for (let item; item = next(), !item.done; ) {
+    use(item.value);
+  }
+}
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn loop_body_var_written_in_do_while_body_or_object_literal_becomes_let() {
+    let input = r#"
+while (more()) {
+  var a, b;
+  do {
+    a = read();
+    out.push(a);
+  } while (again());
+  sink({ ...base, flag: (b = load()) != null && b, last: a });
+}
+"#;
+    let expected = r#"
+while (more()) {
+  let a, b;
+  do {
+    a = read();
+    out.push(a);
+  } while (again());
+  sink({ ...base, flag: (b = load()) != null && b, last: a });
+}
+"#;
+    assert_eq_normalized(&apply_rule(input), expected);
+}
+
+#[test]
+fn loop_body_var_written_on_every_path_survives_pipeline() {
+    let input = r#"
+while (more()) {
+  var a;
+  if (check()) {
+    a = first();
+  } else {
+    a = second();
+  }
+  use(a);
+}
+"#;
+    let expected = r#"
+while (more()) {
+  let a;
+  if (check()) {
+    a = first();
+  } else {
+    a = second();
+  }
+  use(a);
+}
+"#;
+    assert_eq_normalized(&render_pipeline(input), expected);
+}
+
+/// Each input leaves the previous iteration's value visible on some path, so
+/// every loop-body `var` stays.
+#[test]
+fn loop_body_var_not_written_on_every_path_stays_var() {
+    let inputs = [
+        // only one branch writes
+        "while (more()) { var a; if (check()) { a = 1; } else { other(); } use(a); }",
+        // `if` without `else`
+        "while (more()) { var a; if (check()) { a = 1; } use(a); }",
+        // no `default`
+        "while (more()) { var a; switch (kind()) { case 1: a = 1; break; case 2: a = 2; break; } use(a); }",
+        // a case without a write
+        "while (more()) { var a; switch (kind()) { case 1: a = 1; break; case 2: other(); break; default: a = 2; } use(a); }",
+        // read before write inside a case
+        "while (more()) { var a; switch (kind()) { case 1: use(a); a = 1; break; default: a = 2; } }",
+        // a case entered directly reads before any write
+        "while (more()) { var a; switch (kind()) { case 1: a = 1; case 2: use(a); break; default: a = 2; } }",
+        // a `break` skips the write
+        "while (more()) { var a; switch (kind()) { case 1: if (check()) break; a = 1; break; default: a = 2; } use(a); }",
+        // a labeled `break` skips the write
+        "while (more()) { var a; block: { if (check()) break block; a = 1; } use(a); }",
+        // the write sits on the right of `&&`
+        "while (more()) { var a; check() && (a = 1); use(a); }",
+        // the write is in a nested loop body that may not run
+        "while (more()) { var a; while (check()) a = 1; use(a); }",
+        // the write is inside `try`
+        "while (more()) { var a; try { a = load(); } catch (e) {} use(a); }",
+        // a closure reads before the write
+        "while (more()) { var a; run(() => a); a = 1; }",
+        // the write reads the carried value
+        "while (more()) { var a; out.push(a = a + 1); }",
+        // a for-head var read in the test before any write
+        "while (more()) { for (var item; check(item); item = next()) use(item); }",
+        // a `break` leaves the `do` body before the write
+        "while (more()) { var a; do { if (check()) break; a = 1; } while (again()); use(a); }",
+        // a `continue` reaches the `do` test before the write
+        "while (more()) { var a; do { if (check()) continue; a = 1; } while (again(a)); }",
+        // an object literal reads before its later property writes
+        "while (more()) { var a; sink({ first: a, second: a = 1 }); }",
+        // a shorthand property reads
+        "while (more()) { var a; sink({ a }); a = 1; }",
+    ];
+    for input in inputs {
+        assert_eq_normalized(&apply_rule(input), input);
+    }
+}
+
+#[test]
+fn loop_body_for_head_var_read_after_its_loop_stays_var() {
+    // `let` in the head would end at the loop; the read after it needs the
+    // function-scoped var.
+    let input = r#"
+while (more()) {
+  for (var item; (item = next()) && !item.done; ) use(item.value);
+  use(item);
+}
+"#;
+    assert_eq_normalized(&apply_rule(input), input);
+}
