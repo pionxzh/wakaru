@@ -118,6 +118,34 @@ See `docs/testing.md` for test helpers, patterns, and organization.
 
 ## Developing a Rule
 
+### Choosing what a rewrite proves
+
+A rewrite must never change behavior; how many safe inputs it accepts is a
+trade-off. Decide this while planning: when the check a rewrite needs grows
+large, give up coverage instead of growing the check.
+
+- A missed rewrite leaves code harder to read; a wrong one changes what it
+  does. An elaborate best-effort analysis is itself a correctness risk,
+  because its own bugs become wrong output. Prefer a small conservative check
+  that is easy to audit.
+- Before building an analysis, try in order: narrow the rewrite to shapes
+  whose proof is obvious; prove a weaker property that still suffices (no
+  other use anywhere in the scope, rather than no read on any later path);
+  check where the facts are visible (after a decoded body is back in its
+  function, not while it is detached); and at a join that is costly to
+  resolve (a loop or `try` exit, a jump), keep the state from before it.
+- The boundary is likely in the wrong place when the proof needs runtime
+  values (whether a call runs, whether a property has a getter) or
+  interprocedural or alias reasoning; when each fix adds another special
+  case; when the check covers less than the rewrite affects (dropping a write
+  affects every read of the binding, not only the next few statements); or
+  when the check is far larger than the rewrite and the cases it gains are
+  not `wild-observed` (see `docs/reviewing.md#shape-claims-need-provenance`).
+- Reuse the shared proofs in `crates/core/src/analysis/` and
+  `crates/core/src/rules/binding_facts.rs` before writing a new one.
+- A named assumption (`docs/rewrite-assumptions.md`) covers producer behavior
+  the AST cannot show. It is not a way around a proof that is hard to write.
+
 ### Every change needs a unit test
 
 **No code change is committed without a corresponding unit test.** Pipeline snapshot updates alone are not sufficient — they test the whole pipeline, not the individual change.
