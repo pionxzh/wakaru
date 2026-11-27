@@ -747,7 +747,8 @@ rationale, or level gating appear.
   a parameter, a function declaration), after a write earlier in the source,
   and when a hoisted function declaration writes it. VarDeclToLetConst drops
   that initializer when the declaration becomes `let`, and keeps a bare
-  loop-body `var` that is assigned as `var`.
+  loop-body `var` as `var` when a read can see the value an earlier iteration
+  assigned (no write on every path before it).
 - **UnPrototypeClass** — standard and above; a constructor whose members the
   scope enumerates stays a function (`prototype_methods_not_enumerated`). Runs
   before ArrowFunction so Closure Compiler's
